@@ -48,6 +48,12 @@ const el = {
   confirmNo: $('#confirm-no'),
   signIn: $('#signin-btn'),
   signInNote: $('#signin-note'),
+  sheetTitle: $('#sheet-title'),
+  introConnected: $('#intro-connected'),
+  introSetup: $('#intro-setup'),
+  statusText: $('#status-text'),
+  statusDetail: $('#status-detail'),
+  tokenHelp: $('#token-help'),
   toast: $('#toast'),
 };
 
@@ -754,18 +760,44 @@ function openSheet() {
   el.cfgOwner.value = (cfg && cfg.owner) || CONFIG.owner;
   el.cfgRepo.value = (cfg && cfg.repo) || CONFIG.repo;
   el.cfgToken.value = cfg ? cfg.token : '';
-  el.cfgForget.hidden = !connected();
-  el.cfgLink.hidden = !cfg;
   el.cfgErr.hidden = true;
 
+  const isConnected = connected();
+  el.cfgForget.hidden = !isConnected;
+  el.cfgLink.hidden = !cfg;
   el.signIn.hidden = !oauthConfigured || Boolean(session);
   el.signInNote.hidden = el.signIn.hidden;
+
+  /* Already connected? Say so. Leading with token instructions reads like
+   * something is wrong when nothing is. */
+  el.sheetTitle.textContent = isConnected ? 'Winnow' : 'Connect Winnow';
+  el.introConnected.hidden = !isConnected;
+  el.introSetup.hidden = isConnected;
+  el.tokenHelp.hidden = Boolean(session);
+  /* The token fallback is noise while a session is working. Disconnect first. */
+  el.cfgAdvanced.hidden = Boolean(session);
+
+  if (isConnected) {
+    el.statusText.textContent = session ? 'Signed in with GitHub' : 'Connected with a token';
+    el.statusDetail.textContent = session
+      ? `Reading and writing ${owner()}/${repo()}. Access renews on its own and can be revoked from GitHub at any time.`
+      : `Reading and writing ${owner()}/${repo()} with a token stored in this browser.`;
+  }
+
   /* Without a sign-in button there is nothing above the fold, so open the
    * token section rather than showing an apparently empty dialog. */
-  el.cfgAdvanced.open = el.signIn.hidden && !connected();
+  el.cfgAdvanced.open = el.signIn.hidden && !isConnected;
 
   el.sheet.hidden = false;
-  (el.signIn.hidden ? el.cfgToken : el.signIn).focus();
+
+  /* Never focus something hidden: it silently does nothing and strands the
+   * keyboard outside the dialog. */
+  const focusTarget = !el.signIn.hidden
+    ? el.signIn
+    : isConnected
+      ? el.cfgForget
+      : el.cfgToken;
+  focusTarget.focus();
 }
 
 function closeSheet() {

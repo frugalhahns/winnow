@@ -404,6 +404,23 @@ button.primary.is-danger {
   color: #fff;
 }
 
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: #5aa469;
+  box-shadow: 0 0 0 3px rgb(90 164 105 / .18);
+}
+
 .sheet label {
   display: block;
   margin: 16px 0 6px;

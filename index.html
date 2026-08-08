@@ -24,7 +24,10 @@
       <button class="tab" role="tab" data-view="browse" aria-selected="false">Browse</button>
     </nav>
     <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
     </button>
   </header>
 
@@ -57,16 +60,28 @@
 <div class="sheet-backdrop" id="sheet" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <h2 id="sheet-title">Connect Winnow</h2>
-    <p class="muted">
-      Winnow writes straight to your private notes repo. It needs a
-      <strong>fine-grained personal access token</strong> scoped to that one repo
-      with <em>Contents: Read&nbsp;and&nbsp;write</em>. Nothing else.
-    </p>
-    <p class="muted small">
-      The token is stored in this browser only (localStorage). It never leaves your
-      device except to call api.github.com. Use a token scoped to a single repo so a
-      leak can do nothing but write notes.
-    </p>
+
+    <div id="intro-connected" hidden>
+      <p class="status-line">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status-text">Signed in with GitHub</span>
+      </p>
+      <p class="muted small" id="status-detail"></p>
+    </div>
+
+    <div id="intro-setup">
+      <p class="muted">
+        Winnow writes straight to your private notes repo, so it needs permission
+        to reach it. Signing in with GitHub is the easy way, and there is nothing
+        to type or remember.
+      </p>
+      <p class="muted small" id="intro-token-note">
+        Prefer a token? The fallback below takes a fine-grained personal access
+        token scoped to that one repo with <em>Contents: Read&nbsp;and&nbsp;write</em>.
+        It is stored in this browser only and never leaves your device except to
+        call api.github.com.
+      </p>
+    </div>
 
     <button type="button" class="primary signin" id="signin-btn" hidden>
       <svg viewBox="0 0 16 16" aria-hidden="true" class="gh-mark">
@@ -103,7 +118,7 @@
       <button type="button" class="ghost" id="cfg-forget" hidden>Disconnect</button>
     </div>
 
-    <p class="muted small">
+    <p class="muted small" id="token-help">
       <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">
         Create a token &rarr;
       </a>
