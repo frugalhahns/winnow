@@ -51,7 +51,13 @@
   <section class="view" id="view-browse">
     <div class="browse-bar">
       <input type="search" id="search" placeholder="Search notes" aria-label="Search notes">
+      <button class="ghost" id="select-btn" aria-pressed="false">Select</button>
       <button class="ghost" id="refresh-btn">Refresh</button>
+    </div>
+
+    <div class="selectbar" id="selectbar" hidden>
+      <span id="select-count">Pick two or more notes to merge</span>
+      <button class="primary" id="merge-btn" disabled>Merge</button>
     </div>
     <div id="browse-body"></div>
   </section>
@@ -136,7 +142,7 @@
   <div class="sheet sheet-sm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body">
     <h2 id="confirm-title">Delete this note?</h2>
     <p class="confirm-note" id="confirm-body"></p>
-    <p class="muted small">
+    <p class="muted small" id="confirm-detail">
       Removed from Winnow and from your notes repo, archived copy included.
       Git keeps every version, so it can still be recovered from history.
     </p>

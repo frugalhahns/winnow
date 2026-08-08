@@ -113,6 +113,26 @@ page at any time; "Disconnect" in the app only clears it from this device.
 Notes are always rendered as text, never as HTML, so a note containing markup
 cannot execute.
 
+## Duplicates and merging
+
+**At capture time.** Paste a URL you have already saved and Winnow says which
+note holds it, its category and when, before you submit. Matching ignores
+scheme, `www`, trailing slashes and tracking params, so a shared link with `utm`
+tags still matches the clean one you saved.
+
+**Automatically.** Saving the same link anyway is fine: the sweep folds it into
+the existing note rather than making a second one.
+
+**By suggestion.** A weekly pass in the notes repo proposes notes that look like
+the same topic. They appear under *Might be one note* in Browse with **Merge**
+or **Keep separate**. Nothing changes until you choose, and dismissals stick.
+
+**By hand.** Hit **Select** in Browse, tick two or more notes, then **Merge**.
+
+Merging is additive. The oldest note keeps its title, category and date, and
+gains the others' links, tags and original text under dated separators. Nothing
+is discarded.
+
 ## Deleting a note
 
 Swipe a note left to uncover **Delete**, then confirm. On a desktop there is no

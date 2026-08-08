@@ -35,6 +35,10 @@ const el = {
   queue: $('#queue'),
   search: $('#search'),
   refresh: $('#refresh-btn'),
+  selectBtn: $('#select-btn'),
+  selectBar: $('#selectbar'),
+  selectCount: $('#select-count'),
+  mergeBtn: $('#merge-btn'),
   browseBody: $('#browse-body'),
   sheet: $('#sheet'),
   cfgOwner: $('#cfg-owner'),
@@ -50,6 +54,8 @@ const el = {
   confirm: $('#confirm'),
   confirmBody: $('#confirm-body'),
   confirmYes: $('#confirm-yes'),
+  confirmTitle: $('#confirm-title'),
+  confirmDetail: $('#confirm-detail'),
   confirmNo: $('#confirm-no'),
   signIn: $('#signin-btn'),
   signInNote: $('#signin-note'),
@@ -67,6 +73,13 @@ let session = loadSession();
 let notesCache = null;
 let pendingCache = [];
 let urlIndex = null;
+let suggestionsCache = null;
+/* Notes alone are not enough to consider Browse loaded: pending captures and
+ * suggestions come from separate files, and the capture-time prefetch fills
+ * notesCache without them. */
+let browseLoaded = false;
+let selectMode = false;
+const selected = new Set();
 
 const oauthConfigured = Boolean(CONFIG.clientId && CONFIG.authWorker);
 
@@ -357,6 +370,7 @@ async function flushQueue({ quiet = false } = {}) {
   if (sent) {
     /* Browse caches; a fresh capture must not be missing from Pending. */
     notesCache = null;
+    browseLoaded = false;
     if (!quiet) toast(sent === 1 ? 'Saved' : `Saved ${sent} notes`);
   }
 }
@@ -390,6 +404,202 @@ async function fetchNotesFile() {
 
 async function fetchNotes() {
   return (await fetchNotesFile()).data;
+}
+
+/* --------------------------------------------------------------- merge */
+
+const SUGGESTIONS_PATH = () =>
+  `/repos/${owner()}/${repo()}/contents/data/suggestions.json`;
+
+/* Combine notes into the oldest of them. Additive: every link, every body and
+ * every tag survives. The survivor keeps its title, category and date, so a
+ * merge never silently renames or refiles anything. */
+function mergeInto(data, ids) {
+  const wanted = new Set(ids);
+  const found = [];
+  for (const cat of data.categories) {
+    for (const note of cat.notes) {
+      if (wanted.has(note.id)) found.push({ note, category: cat.name });
+    }
+  }
+  if (found.length < 2) throw new Error('Those notes are no longer available to merge.');
+
+  found.sort((a, b) => String(a.note.captured).localeCompare(String(b.note.captured)));
+  const primary = found[0].note;
+  const others = found.slice(1).map((f) => f.note);
+
+  const links = [...(primary.links || [])];
+  const known = new Set(links.map((l) => normalizeUrl(l.url)));
+  const tags = new Set(primary.tags || []);
+  let body = (primary.body || '').trim();
+
+  for (const other of others) {
+    for (const link of other.links || []) {
+      const key = normalizeUrl(link.url);
+      if (key && !known.has(key)) {
+        known.add(key);
+        links.push(link);
+      }
+    }
+    for (const tag of other.tags || []) tags.add(tag);
+
+    const addition = (other.body || '').trim();
+    if (addition && !body.includes(addition)) {
+      body += `\n\n--- merged from "${other.title}", ${String(other.captured).slice(0, 10)} ---\n\n${addition}`;
+    }
+  }
+
+  const merged = {
+    ...primary,
+    links,
+    body,
+    tags: [...tags].slice(0, 6),
+    mergedFrom: [...(primary.mergedFrom || []), ...others.map((o) => o.id)],
+  };
+
+  const categories = data.categories
+    .map((cat) => ({
+      ...cat,
+      notes: cat.notes
+        .filter((n) => !wanted.has(n.id) || n.id === primary.id)
+        .map((n) => (n.id === primary.id ? merged : n)),
+    }))
+    .filter((cat) => cat.notes.length);
+
+  return {
+    ...data,
+    categories,
+    count: categories.reduce((sum, c) => sum + c.notes.length, 0),
+  };
+}
+
+async function applyMerge(ids) {
+  const { data, sha } = await fetchNotesFile();
+  const next = mergeInto(data, ids);
+
+  await gh(NOTES_PATH(), {
+    method: 'PUT',
+    body: JSON.stringify({
+      message: `merge: ${ids.length} notes`,
+      content: toBase64(JSON.stringify(next, null, 2) + '\n'),
+      sha,
+    }),
+  });
+
+  notesCache = next;
+  urlIndex = buildUrlIndex(next);
+  return next;
+}
+
+async function fetchSuggestions() {
+  try {
+    const res = await gh(SUGGESTIONS_PATH());
+    const body = await res.json();
+    return { data: JSON.parse(fromBase64(body.content)), sha: body.sha };
+  } catch (err) {
+    /* No weekly run yet. Not a problem worth mentioning. */
+    if (err.status === 404) return { data: { groups: [], dismissed: [] }, sha: null };
+    throw err;
+  }
+}
+
+/* Removing a group is the same write whether it was merged or dismissed: the
+ * difference is only whether the key is remembered as unwanted. */
+async function resolveSuggestion(key, { remember }) {
+  const { data, sha } = await fetchSuggestions();
+  if (!sha) return;
+
+  const next = {
+    ...data,
+    groups: (data.groups || []).filter((g) => g.key !== key),
+    dismissed: remember
+      ? [...new Set([...(data.dismissed || []), key])]
+      : data.dismissed || [],
+  };
+
+  await gh(SUGGESTIONS_PATH(), {
+    method: 'PUT',
+    body: JSON.stringify({
+      message: remember ? 'dismiss suggestion' : 'apply suggestion',
+      content: toBase64(JSON.stringify(next, null, 2) + '\n'),
+      sha,
+    }),
+  });
+  suggestionsCache = next;
+}
+
+function renderSuggestions(groups) {
+  const section = document.createElement('section');
+  section.className = 'category is-suggested';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = 'Might be one note';
+
+  const meta = document.createElement('p');
+  meta.className = 'cat-meta';
+  meta.textContent = 'Suggestions only. Nothing changes until you say so.';
+
+  section.append(h3, meta);
+
+  for (const group of groups) {
+    const card = document.createElement('div');
+    card.className = 'suggestion';
+
+    const reason = document.createElement('p');
+    reason.className = 'sug-reason';
+    reason.textContent = group.reason || 'These look like the same thing.';
+    card.append(reason);
+
+    const list = document.createElement('ul');
+    list.className = 'sug-titles';
+    for (const title of group.titles || []) {
+      const li = document.createElement('li');
+      li.textContent = title;
+      list.append(li);
+    }
+    card.append(list);
+
+    const actions = document.createElement('div');
+    actions.className = 'sug-actions';
+
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'ghost';
+    dismiss.textContent = 'Keep separate';
+    dismiss.addEventListener('click', async () => {
+      dismiss.disabled = true;
+      try {
+        await resolveSuggestion(group.key, { remember: true });
+        renderBrowse(notesCache);
+        toast('Kept separate. You will not be asked again.');
+      } catch (err) {
+        dismiss.disabled = false;
+        toast(err.message, true);
+      }
+    });
+
+    const merge = document.createElement('button');
+    merge.type = 'button';
+    merge.className = 'primary';
+    merge.textContent = 'Merge';
+    merge.addEventListener('click', () =>
+      askDelete(
+        (group.titles || []).join('  +  '),
+        async () => {
+          await applyMerge(group.noteIds);
+          await resolveSuggestion(group.key, { remember: false });
+          renderBrowse(notesCache);
+        },
+        MERGE_COPY
+      )
+    );
+
+    actions.append(dismiss, merge);
+    card.append(actions);
+    section.append(card);
+  }
+
+  return section;
 }
 
 /* ------------------------------------------------------- pending inbox */
@@ -493,18 +703,21 @@ function renderPending(items) {
 }
 
 async function loadBrowse({ force = false } = {}) {
-  if (notesCache && !force) return renderBrowse(notesCache);
+  if (browseLoaded && !force) return renderBrowse(notesCache);
 
   el.browseBody.replaceChildren(emptyState('Loading', 'Fetching your notes.'));
   try {
     /* Pending is a nicety: never let it fail the whole view. */
-    const [notes, pending] = await Promise.all([
+    const [notes, pending, suggestions] = await Promise.all([
       fetchNotes(),
       fetchPending().catch(() => []),
+      fetchSuggestions().catch(() => ({ data: { groups: [] } })),
     ]);
     notesCache = notes;
     pendingCache = pending;
+    suggestionsCache = suggestions.data;
     urlIndex = buildUrlIndex(notes);
+    browseLoaded = true;
     renderBrowse(notesCache);
   } catch (err) {
     if (err.status === 404) {
@@ -572,9 +785,13 @@ function renderBrowse(data) {
 
   /* Search filters filed notes only; pending items are transient, and hiding
    * them mid-search would look like they had been lost. */
+  const extras = !q && (pendingCache.length || suggestionGroups().length);
   if (!q && pendingCache.length) el.browseBody.append(renderPending(pendingCache));
+  if (!q && suggestionGroups().length) {
+    el.browseBody.append(renderSuggestions(suggestionGroups()));
+  }
 
-  if (!matching.length && !(!q && pendingCache.length)) {
+  if (!matching.length && !extras) {
     el.browseBody.append(
       q
         ? emptyState('No matches', `Nothing matches "${el.search.value.trim()}".`)
@@ -586,6 +803,17 @@ function renderBrowse(data) {
   for (const cat of matching) {
     el.browseBody.append(renderCategory(cat));
   }
+}
+
+/* Only offer a group whose notes all still exist; deletes happen between the
+ * weekly run and now. */
+function suggestionGroups() {
+  const groups = (suggestionsCache && suggestionsCache.groups) || [];
+  if (!groups.length || !notesCache) return [];
+  const alive = new Set(
+    (notesCache.categories || []).flatMap((c) => (c.notes || []).map((n) => n.id))
+  );
+  return groups.filter((g) => (g.noteIds || []).length > 1 && g.noteIds.every((id) => alive.has(id)));
 }
 
 function noteText(n) {
@@ -709,8 +937,47 @@ function renderNote(n) {
 
   /* Card first so Tab reaches the note's link before the delete button. */
   row.append(li, del);
-  attachSwipe(row, li);
+
+  if (selectMode) {
+    row.classList.add('is-selectable');
+    if (selected.has(n.id)) row.classList.add('is-selected');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'note-pick';
+    box.checked = selected.has(n.id);
+    box.setAttribute('aria-label', `Select ${n.title || 'note'}`);
+    box.addEventListener('change', () => {
+      if (box.checked) selected.add(n.id);
+      else selected.delete(n.id);
+      row.classList.toggle('is-selected', box.checked);
+      updateSelectBar();
+    });
+    li.prepend(box);
+  } else {
+    attachSwipe(row, li);
+  }
   return row;
+}
+
+/* --------------------------------------------------------- select mode */
+
+function updateSelectBar() {
+  const n = selected.size;
+  el.selectCount.textContent =
+    n === 0 ? 'Pick two or more notes to merge' : `${n} selected`;
+  el.mergeBtn.disabled = n < 2;
+}
+
+function setSelectMode(on) {
+  selectMode = on;
+  selected.clear();
+  el.selectBar.hidden = !on;
+  el.selectBtn.textContent = on ? 'Done' : 'Select';
+  el.selectBtn.setAttribute('aria-pressed', String(on));
+  /* Swipe-to-delete and tap-to-select on the same card would fight. */
+  closeOpenRow();
+  updateSelectBar();
+  if (notesCache) renderBrowse(notesCache);
 }
 
 /* ---------------------------------------------------------------- swipe */
@@ -811,18 +1078,41 @@ function attachSwipe(row, card) {
 /* { label, run } so the same dialog covers filed notes and pending captures. */
 let pendingDelete = null;
 
-function askDelete(label, run) {
-  pendingDelete = { label, run };
+const DELETE_COPY = {
+  title: 'Delete this note?',
+  detail:
+    'Removed from Winnow and from your notes repo, archived copy included. Git keeps every version, so it can still be recovered from history.',
+  confirmLabel: 'Delete',
+  danger: true,
+};
+
+function askDelete(label, run, copy = DELETE_COPY) {
+  const c = { ...DELETE_COPY, ...copy };
+  pendingDelete = { label, run, confirmLabel: c.confirmLabel };
+  el.confirmTitle.textContent = c.title;
+  el.confirmDetail.textContent = c.detail;
   el.confirmBody.textContent = label;
+  el.confirmYes.textContent = c.confirmLabel;
+  el.confirmYes.classList.toggle('is-danger', c.danger !== false);
   el.confirm.hidden = false;
   el.confirmYes.focus();
 }
+
+/* Merging keeps everything, so it should not wear the delete dialog's clothes. */
+const MERGE_COPY = {
+  title: 'Merge into one note?',
+  detail:
+    'The oldest note keeps its title, category and date, and gains the others\u2019 links, tags and text. Nothing is discarded.',
+  confirmLabel: 'Merge',
+  danger: false,
+};
 
 function closeConfirm() {
   pendingDelete = null;
   el.confirm.hidden = true;
   el.confirmYes.disabled = false;
   el.confirmYes.textContent = 'Delete';
+  el.confirmYes.classList.add('is-danger');
 }
 
 function withoutNote(data, id) {
@@ -1258,15 +1548,31 @@ el.confirmYes.addEventListener('click', async () => {
   if (!job) return;
 
   el.confirmYes.disabled = true;
-  el.confirmYes.textContent = 'Deleting';
+  el.confirmYes.textContent = job.confirmLabel === 'Merge' ? 'Merging' : 'Deleting';
   try {
     await job.run();
+    const done = job.confirmLabel === 'Merge' ? 'Merged' : 'Deleted';
     closeConfirm();
-    toast('Deleted');
+    toast(done);
   } catch (err) {
     closeConfirm();
     toast(err.message, true);
   }
+});
+
+el.selectBtn.addEventListener('click', () => setSelectMode(!selectMode));
+
+el.mergeBtn.addEventListener('click', () => {
+  const ids = [...selected];
+  if (ids.length < 2) return;
+  askDelete(
+    `${ids.length} notes`,
+    async () => {
+      await applyMerge(ids);
+      setSelectMode(false);
+    },
+    MERGE_COPY
+  );
 });
 
 el.refresh.addEventListener('click', () => loadBrowse({ force: true }));
