@@ -4,7 +4,7 @@
  * localStorage and are flushed by app.js when the network returns.
  */
 
-const CACHE = 'winnow-shell-v2';
+const CACHE = 'winnow-shell-v3';
 const SHELL = [
   './',
   'index.html',

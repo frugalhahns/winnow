@@ -998,6 +998,37 @@ function readSetupToken() {
   return token.trim();
 }
 
+/* An installed home-screen app can sit on a stale worker for days, which looks
+ * exactly like a fix that never shipped. Check for a new one on every launch,
+ * and reload once when it takes over. */
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let reloading = false;
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    /* No controller before means this is the first install, not an update.
+     * Reloading there would be a pointless flash on first run. */
+    if (!hadController || reloading) return;
+    reloading = true;
+    location.reload();
+  });
+
+  navigator.serviceWorker
+    .register('sw.js')
+    .then((reg) => {
+      reg.update().catch(() => {});
+      /* Foregrounding the app is the moment a stale build is most likely. */
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+    })
+    .catch(() => {
+      /* offline shell is a bonus; capture still queues without it */
+    });
+}
+
 async function boot() {
   const handoff = readSetupToken();
 
@@ -1042,11 +1073,7 @@ async function boot() {
 
   if (connected()) flushQueue({ quiet: true });
 
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {
-      /* offline shell is a bonus; capture still queues without it */
-    });
-  }
+  registerServiceWorker();
 }
 
 boot();

@@ -364,7 +364,11 @@ input#search::placeholder { color: var(--ink-faint); }
   place-items: center;
   padding: 20px;
   z-index: 50;
+  /* iOS Safari withholds click events from elements it does not consider
+   * clickable. Without this, tapping outside the sheet does nothing there. */
+  cursor: pointer;
 }
+.sheet { cursor: default; }
 
 
 .sheet {
