@@ -25,10 +25,12 @@ also runs the scheduled Gemini sweep. See that repo's README for the pipeline.
 1. Create the private notes repo first (`winnow-store`), then come back here.
 2. **Settings > Pages > Source: GitHub Actions.** Push to `main` deploys.
 3. Open `https://<you>.github.io/winnow`.
-4. The setup sheet asks for three things:
-   - GitHub username
-   - private notes repo name
-   - a fine-grained personal access token
+4. The setup sheet asks for one thing: a fine-grained personal access token.
+
+Which account and repo to write to lives in `config.js`, not in the setup sheet.
+Neither is a secret, so neither is worth typing. Forking Winnow means editing
+those two lines. The sheet's "Writing somewhere else?" section can override them
+per device if you need it.
 
 ### The token
 
@@ -51,6 +53,26 @@ page at any time; "Disconnect" in the app only clears it from this device.
 
 Notes are always rendered as text, never as HTML, so a note containing markup
 cannot execute.
+
+## Adding another device
+
+You only enter the token once per browser, but "once per browser" still means
+typing a long string on a phone. So don't. On a device that is already
+connected, open settings and hit **Copy setup link**. You get:
+
+```
+https://<you>.github.io/winnow/#token=github_pat_...
+```
+
+Open that on the new device and it connects itself: the app stores the token and
+strips the fragment before anything else runs.
+
+The token rides in the URL **fragment**, not the query string. Browsers never
+send fragments to the server, so it stays out of GitHub Pages access logs and out
+of any `Referer` header. It does still land in whatever you paste it into, so
+that link is exactly as sensitive as the token itself. Keep it in your password
+manager, not in a chat message, and prefer a separate token per device if you
+want to revoke one without killing the rest.
 
 ## Install on your phone
 

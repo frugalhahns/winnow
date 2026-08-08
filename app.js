@@ -8,6 +8,8 @@
  * Contents: read and write. Nothing here ever renders note text as HTML.
  */
 
+import { CONFIG } from './config.js';
+
 const CFG_KEY = 'winnow.cfg';
 const QUEUE_KEY = 'winnow.queue';
 const API = 'https://api.github.com';
@@ -31,6 +33,8 @@ const el = {
   cfgErr: $('#cfg-err'),
   cfgSave: $('#cfg-save'),
   cfgForget: $('#cfg-forget'),
+  cfgLink: $('#cfg-link'),
+  cfgAdvanced: $('#cfg-advanced'),
   settingsBtn: $('#settings-btn'),
   toast: $('#toast'),
 };
@@ -40,10 +44,19 @@ let notesCache = null;
 
 /* ---------------------------------------------------------------- config */
 
+/* Only the token is stored per-device. Owner and repo come from config.js
+ * unless someone has deliberately pointed this build somewhere else. */
 function loadCfg() {
   try {
     const raw = localStorage.getItem(CFG_KEY);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const saved = JSON.parse(raw);
+    if (!saved || !saved.token) return null;
+    return {
+      owner: saved.owner || CONFIG.owner,
+      repo: saved.repo || CONFIG.repo,
+      token: saved.token,
+    };
   } catch {
     return null;
   }
@@ -386,15 +399,14 @@ function showView(name) {
 }
 
 function openSheet() {
-  if (cfg) {
-    el.cfgOwner.value = cfg.owner;
-    el.cfgRepo.value = cfg.repo;
-    el.cfgToken.value = cfg.token;
-    el.cfgForget.hidden = false;
-  }
+  el.cfgOwner.value = (cfg && cfg.owner) || CONFIG.owner;
+  el.cfgRepo.value = (cfg && cfg.repo) || CONFIG.repo;
+  el.cfgToken.value = cfg ? cfg.token : '';
+  el.cfgForget.hidden = !cfg;
+  el.cfgLink.hidden = !cfg;
   el.cfgErr.hidden = true;
   el.sheet.hidden = false;
-  (cfg ? el.cfgToken : el.cfgOwner).focus();
+  el.cfgToken.focus();
 }
 
 function closeSheet() {
@@ -452,37 +464,60 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !el.sheet.hidden && cfg) closeSheet();
 });
 
-el.cfgSave.addEventListener('click', async () => {
-  const next = {
-    owner: el.cfgOwner.value.trim(),
-    repo: el.cfgRepo.value.trim(),
-    token: el.cfgToken.value.trim(),
-  };
-  if (!next.owner || !next.repo || !next.token) {
-    return showCfgError('All three fields are required.');
-  }
-
-  el.cfgSave.disabled = true;
-  el.cfgSave.textContent = 'Verifying';
+/* Proves the token can actually reach the repo before persisting it, so a typo
+ * or an under-scoped token fails here instead of silently on first capture. */
+async function connect(next) {
   const prev = cfg;
   cfg = next;
   try {
-    /* Confirms the token can actually reach this repo before we persist it. */
     await gh(`/repos/${next.owner}/${next.repo}`);
     saveCfg(next);
-    closeSheet();
-    toast('Connected');
-    flushQueue({ quiet: true });
+    return { ok: true };
   } catch (err) {
     cfg = prev;
-    showCfgError(
-      err.status === 404
-        ? 'Repo not found, or the token has no access to it. Check the name and that the token grants Contents access to this repo.'
-        : err.message
-    );
-  } finally {
-    el.cfgSave.disabled = false;
-    el.cfgSave.textContent = 'Verify & save';
+    return {
+      ok: false,
+      message:
+        err.status === 404
+          ? `Cannot reach ${next.owner}/${next.repo}. Check that the token grants Contents access to that repo.`
+          : err.message,
+    };
+  }
+}
+
+el.cfgSave.addEventListener('click', async () => {
+  const next = {
+    owner: el.cfgOwner.value.trim() || CONFIG.owner,
+    repo: el.cfgRepo.value.trim() || CONFIG.repo,
+    token: el.cfgToken.value.trim(),
+  };
+  if (!next.token) return showCfgError('Paste a token to connect.');
+
+  el.cfgSave.disabled = true;
+  el.cfgSave.textContent = 'Verifying';
+  const result = await connect(next);
+  el.cfgSave.disabled = false;
+  el.cfgSave.textContent = 'Verify & save';
+
+  if (!result.ok) return showCfgError(result.message);
+
+  el.cfgForget.hidden = false;
+  el.cfgLink.hidden = false;
+  closeSheet();
+  toast('Connected');
+  flushQueue({ quiet: true });
+});
+
+/* Setup link for a second device. The token rides in the fragment, which
+ * browsers never send to the server, so it stays out of Pages access logs. */
+el.cfgLink.addEventListener('click', async () => {
+  if (!cfg) return;
+  const link = `${location.origin}${location.pathname}#token=${encodeURIComponent(cfg.token)}`;
+  try {
+    await navigator.clipboard.writeText(link);
+    toast('Setup link copied. It carries the token, so treat it as the token.');
+  } catch {
+    showCfgError('Clipboard is blocked here. Copy the token field by hand instead.');
   }
 });
 
@@ -490,6 +525,7 @@ el.cfgForget.addEventListener('click', () => {
   clearCfg();
   el.cfgToken.value = '';
   el.cfgForget.hidden = true;
+  el.cfgLink.hidden = true;
   notesCache = null;
   toast('Token removed from this device');
 });
@@ -511,7 +547,20 @@ window.addEventListener('online', () => flushQueue({ quiet: true }));
 
 /* ----------------------------------------------------------------- boot */
 
-function boot() {
+/* A one-tap setup link looks like `.../winnow/#token=github_pat_...`.
+ * The fragment is stripped before anything else runs so the token never sits
+ * in the address bar, in history, or in a Referer header. */
+function readSetupToken() {
+  if (!location.hash) return null;
+  const token = new URLSearchParams(location.hash.slice(1)).get('token');
+  if (!token) return null;
+  history.replaceState(null, '', location.pathname + location.search);
+  return token.trim();
+}
+
+async function boot() {
+  const handoff = readSetupToken();
+
   /* Prefill from ?text= / ?url= so an iOS Shortcut or share link can hand off. */
   const params = new URLSearchParams(location.search);
   const shared = [params.get('title'), params.get('text'), params.get('url')]
@@ -526,8 +575,22 @@ function boot() {
   updateHint();
   el.app.hidden = false;
 
-  if (!cfg) openSheet();
-  else flushQueue({ quiet: true });
+  if (handoff) {
+    const result = await connect({ owner: CONFIG.owner, repo: CONFIG.repo, token: handoff });
+    if (result.ok) {
+      toast('Connected');
+    } else {
+      /* Keep the rejected token on screen so a stale or mistyped link is
+       * obvious and fixable, rather than silently emptying the field. */
+      openSheet();
+      el.cfgToken.value = handoff;
+      showCfgError(result.message);
+    }
+  } else if (!cfg) {
+    openSheet();
+  }
+
+  if (cfg) flushQueue({ quiet: true });
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {

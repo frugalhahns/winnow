@@ -366,7 +366,25 @@ input#search::placeholder { color: var(--ink-faint); }
 }
 .sheet input:focus { border-color: var(--accent-dim); }
 
-.sheet-foot { display: flex; justify-content: flex-end; gap: 10px; margin: 22px 0 18px; }
+.sheet-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 22px 0 18px;
+}
+
+#cfg-advanced { margin-top: 18px; }
+#cfg-advanced summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+  list-style: none;
+}
+#cfg-advanced summary::-webkit-details-marker { display: none; }
+#cfg-advanced summary::before { content: '+ '; }
+#cfg-advanced[open] summary::before { content: '- '; }
+#cfg-advanced summary:hover { color: var(--ink-dim); }
 
 .muted { color: var(--ink-dim); font-size: 0.87rem; margin: 0 0 10px; }
 .muted.small { font-size: 0.78rem; color: var(--ink-faint); line-height: 1.5; }

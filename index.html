@@ -68,19 +68,23 @@
       leak can do nothing but write notes.
     </p>
 
-    <label for="cfg-owner">GitHub username</label>
-    <input id="cfg-owner" placeholder="frugalhahns" autocapitalize="off" autocorrect="off" spellcheck="false">
-
-    <label for="cfg-repo">Private notes repo</label>
-    <input id="cfg-repo" placeholder="winnow-store" autocapitalize="off" autocorrect="off" spellcheck="false">
-
     <label for="cfg-token">Fine-grained token</label>
     <input id="cfg-token" type="password" placeholder="github_pat_&hellip;" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+    <details id="cfg-advanced">
+      <summary>Writing somewhere else?</summary>
+      <label for="cfg-owner">GitHub username</label>
+      <input id="cfg-owner" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+      <label for="cfg-repo">Private notes repo</label>
+      <input id="cfg-repo" autocapitalize="off" autocorrect="off" spellcheck="false">
+    </details>
 
     <p class="err" id="cfg-err" hidden></p>
 
     <div class="sheet-foot">
       <button class="ghost" id="cfg-forget" hidden>Disconnect</button>
+      <button class="ghost" id="cfg-link" hidden>Copy setup link</button>
       <button class="primary" id="cfg-save">Verify &amp; save</button>
     </div>
 
