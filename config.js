@@ -17,5 +17,5 @@ export const CONFIG = {
    *
    * Leave either blank and the button hides, falling back to a token. */
   clientId: 'Iv23lidnKAXSsoshm1ra',
-  authWorker: '',
+  authWorker: 'https://winnow-auth.frugalhahns.workers.dev',
 };
