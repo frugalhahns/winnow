@@ -4,7 +4,7 @@
  * localStorage and are flushed by app.js when the network returns.
  */
 
-const CACHE = 'winnow-shell-v3';
+const CACHE = 'winnow-shell-v4';
 const SHELL = [
   './',
   'index.html',
@@ -37,9 +37,14 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return; // never touch api.github.com
 
-  /* Network first so a deploy shows up immediately; cache is the offline net. */
+  /* Network first so a deploy shows up immediately; cache is the offline net.
+   *
+   * `cache: 'reload'` matters more than it looks. Pages serves these with
+   * max-age=600, and a plain fetch() is served by the HTTP cache, so for ten
+   * minutes "network first" quietly returns the old file. This forces a real
+   * request and refreshes the HTTP cache with it. */
   event.respondWith(
-    fetch(request)
+    fetch(request, { cache: 'reload' })
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((cache) => cache.put(request, copy));
