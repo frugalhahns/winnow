@@ -853,6 +853,38 @@ async function deleteNote(note) {
   notesCache = next;
   closeOpenRow();
   renderBrowse(next);
+
+  /* Best effort, and deliberately after the entry is gone: a stubborn archive
+   * file must not block the delete the user actually asked for. */
+  const archived = await deleteArchived(note);
+  if (archived === false) {
+    toast('Note deleted, but its archived copy could not be removed.', true);
+  }
+}
+
+/* Returns true if removed, null if there was nothing there, false on failure. */
+async function deleteArchived(note) {
+  const day = String(note.captured || '').slice(0, 10);
+  const [year, month] = day.split('-');
+  if (!year || !month) return null;
+
+  const path = `archive/${year}/${month}/${note.id}.md`;
+  try {
+    const res = await gh(`/repos/${owner()}/${repo()}/contents/${path}`);
+    const file = await res.json();
+    await gh(`/repos/${owner()}/${repo()}/contents/${path}`, {
+      method: 'DELETE',
+      body: JSON.stringify({
+        message: `delete archive: ${firstLine(note.title || note.id, 60)}`,
+        sha: file.sha,
+      }),
+    });
+    return true;
+  } catch (err) {
+    /* Never archived, or already gone. Nothing to report. */
+    if (err.status === 404) return null;
+    return false;
+  }
 }
 
 /* Only http(s) becomes a link. Blocks javascript: and data: URLs from the model. */

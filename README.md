@@ -118,9 +118,29 @@ cannot execute.
 Swipe a note left to uncover **Delete**, then confirm. On a desktop there is no
 swipe, so hovering a note (or tabbing to it) slides the same button into view.
 
-Deleting rewrites `data/notes.json` in the notes repo and commits. The original
-capture stays in `archive/`, so nothing is truly gone. A category that loses its
-last note disappears with it. `NOTES.md` catches up on the next sweep.
+Deleting rewrites `data/notes.json` and removes the archived capture too, as two
+commits. A category that loses its last note disappears with it. `NOTES.md`
+catches up on the next sweep.
+
+Removing the archive copy is best effort and happens after the note is gone from
+view, so a stubborn file cannot block the delete you asked for. You get a warning
+toast if it fails.
+
+### Getting a deleted note back
+
+Git keeps every version, so nothing is unrecoverable. In a clone of the notes
+repo:
+
+```sh
+# find the commit that deleted it
+git log --diff-filter=D --name-only --oneline -- 'archive/**'
+
+# bring the file back from the commit before that one
+git checkout <sha>^ -- archive/2026/08/<id>.md
+```
+
+For a note removed only from `data/notes.json`, `git log -p -- data/notes.json`
+shows the entry in the diff, ready to paste back.
 
 ## Adding another device
 
