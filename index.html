@@ -98,6 +98,22 @@
   </div>
 </div>
 
+<!-- ── Delete confirmation ─────────────────────────────────── -->
+<div class="sheet-backdrop" id="confirm" hidden>
+  <div class="sheet sheet-sm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+    <h2 id="confirm-title">Delete this note?</h2>
+    <p class="confirm-note" id="confirm-body"></p>
+    <p class="muted small">
+      It disappears from Winnow, but the original capture stays in
+      <code>archive/</code> in your notes repo, so it is recoverable.
+    </p>
+    <div class="sheet-foot">
+      <button class="ghost" id="confirm-no">Cancel</button>
+      <button class="primary is-danger" id="confirm-yes">Delete</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script src="app.js" type="module"></script>

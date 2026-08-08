@@ -36,6 +36,10 @@ const el = {
   cfgLink: $('#cfg-link'),
   cfgAdvanced: $('#cfg-advanced'),
   settingsBtn: $('#settings-btn'),
+  confirm: $('#confirm'),
+  confirmBody: $('#confirm-body'),
+  confirmYes: $('#confirm-yes'),
+  confirmNo: $('#confirm-no'),
   toast: $('#toast'),
 };
 
@@ -220,13 +224,17 @@ function renderQueue(items) {
 
 /* ---------------------------------------------------------------- browse */
 
-async function fetchNotes() {
-  const res = await gh(
-    `/repos/${cfg.owner}/${cfg.repo}/contents/data/notes.json`,
-    { headers: { Accept: 'application/vnd.github+json' } }
-  );
+const NOTES_PATH = () => `/repos/${cfg.owner}/${cfg.repo}/contents/data/notes.json`;
+
+/* Returns the sha alongside the data: writing the file back requires it. */
+async function fetchNotesFile() {
+  const res = await gh(NOTES_PATH());
   const body = await res.json();
-  return JSON.parse(fromBase64(body.content));
+  return { data: JSON.parse(fromBase64(body.content)), sha: body.sha };
+}
+
+async function fetchNotes() {
+  return (await fetchNotesFile()).data;
 }
 
 async function loadBrowse({ force = false } = {}) {
@@ -307,7 +315,10 @@ function renderCategory(cat) {
 }
 
 function renderNote(n) {
-  const li = document.createElement('li');
+  const row = document.createElement('li');
+  row.className = 'note-row';
+
+  const li = document.createElement('article');
   li.className = 'note';
 
   const title = document.createElement('p');
@@ -346,7 +357,161 @@ function renderNote(n) {
   }
   if (foot.childElementCount) li.append(foot);
 
-  return li;
+  const del = document.createElement('button');
+  del.className = 'note-del';
+  del.type = 'button';
+  del.textContent = 'Delete';
+  del.setAttribute('aria-label', `Delete note: ${n.title || 'Untitled'}`);
+  del.addEventListener('click', () => askDelete(n));
+
+  /* Card first so Tab reaches the note's link before the delete button. */
+  row.append(li, del);
+  attachSwipe(row, li);
+  return row;
+}
+
+/* ---------------------------------------------------------------- swipe */
+
+const SWIPE = 96;
+let openRow = null;
+
+function setRowOpen(row, card, open) {
+  if (open && openRow && openRow !== row) closeOpenRow();
+  row.dataset.open = open ? '1' : '0';
+  card.style.transform = open ? `translateX(-${SWIPE}px)` : '';
+  openRow = open ? row : openRow === row ? null : openRow;
+}
+
+function closeOpenRow() {
+  if (!openRow) return;
+  const card = openRow.querySelector('.note');
+  openRow.dataset.open = '0';
+  if (card) card.style.transform = '';
+  openRow = null;
+}
+
+function attachSwipe(row, card) {
+  let startX = 0;
+  let startY = 0;
+  let dx = 0;
+  let dragging = false;
+  let axisLocked = false;
+
+  card.addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.touches.length !== 1) return;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      dx = 0;
+      dragging = true;
+      axisLocked = false;
+      card.style.transition = 'none';
+    },
+    { passive: true }
+  );
+
+  card.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!dragging) return;
+      const mx = e.touches[0].clientX - startX;
+      const my = e.touches[0].clientY - startY;
+
+      /* Decide once whether this gesture is a scroll or a swipe. Guessing per
+       * frame makes the list feel like it is fighting the finger. */
+      if (!axisLocked) {
+        if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+        if (Math.abs(my) >= Math.abs(mx)) {
+          dragging = false;
+          card.style.transition = '';
+          return;
+        }
+        axisLocked = true;
+      }
+
+      const base = row.dataset.open === '1' ? -SWIPE : 0;
+      dx = Math.max(-SWIPE, Math.min(0, base + mx));
+      card.style.transform = `translateX(${dx}px)`;
+      e.preventDefault();
+    },
+    { passive: false }
+  );
+
+  const release = () => {
+    if (!dragging) return;
+    dragging = false;
+    card.style.transition = '';
+    if (axisLocked) setRowOpen(row, card, dx <= -SWIPE / 2);
+  };
+
+  card.addEventListener('touchend', release);
+  card.addEventListener('touchcancel', release);
+
+  /* While the action is showing, a tap should put the card back rather than
+   * open the note's link. Capture phase, so it beats the anchor. */
+  card.addEventListener(
+    'click',
+    (e) => {
+      if (row.dataset.open === '1') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeOpenRow();
+      }
+    },
+    true
+  );
+}
+
+/* --------------------------------------------------------------- delete */
+
+let pendingDelete = null;
+
+function askDelete(note) {
+  pendingDelete = note;
+  el.confirmBody.textContent = note.title || note.summary || note.id;
+  el.confirm.hidden = false;
+  el.confirmYes.focus();
+}
+
+function closeConfirm() {
+  pendingDelete = null;
+  el.confirm.hidden = true;
+  el.confirmYes.disabled = false;
+  el.confirmYes.textContent = 'Delete';
+}
+
+function withoutNote(data, id) {
+  const categories = (data.categories || [])
+    .map((c) => ({ ...c, notes: (c.notes || []).filter((n) => n.id !== id) }))
+    /* A category with nothing left in it is just noise. */
+    .filter((c) => c.notes.length);
+
+  return {
+    ...data,
+    categories,
+    count: categories.reduce((sum, c) => sum + c.notes.length, 0),
+  };
+}
+
+async function deleteNote(note) {
+  /* Re-read immediately before writing. The daily sweep may have rewritten the
+   * file since this page loaded, and a stale sha would clobber its work. */
+  const { data, sha } = await fetchNotesFile();
+  const next = withoutNote(data, note.id);
+
+  await gh(NOTES_PATH(), {
+    method: 'PUT',
+    body: JSON.stringify({
+      message: `delete: ${firstLine(note.title || note.id, 60)}`,
+      content: toBase64(JSON.stringify(next, null, 2) + '\n'),
+      sha,
+    }),
+  });
+
+  notesCache = next;
+  closeOpenRow();
+  renderBrowse(next);
 }
 
 /* Only http(s) becomes a link. Blocks javascript: and data: URLs from the model. */
@@ -461,7 +626,10 @@ el.sheet.addEventListener('click', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !el.sheet.hidden && cfg) closeSheet();
+  if (e.key !== 'Escape') return;
+  if (!el.confirm.hidden) return closeConfirm();
+  if (openRow) return closeOpenRow();
+  if (!el.sheet.hidden && cfg) closeSheet();
 });
 
 /* Proves the token can actually reach the repo before persisting it, so a typo
@@ -534,6 +702,28 @@ function showCfgError(message) {
   el.cfgErr.textContent = message;
   el.cfgErr.hidden = false;
 }
+
+el.confirmNo.addEventListener('click', closeConfirm);
+
+el.confirm.addEventListener('click', (e) => {
+  if (e.target === el.confirm) closeConfirm();
+});
+
+el.confirmYes.addEventListener('click', async () => {
+  const note = pendingDelete;
+  if (!note) return;
+
+  el.confirmYes.disabled = true;
+  el.confirmYes.textContent = 'Deleting';
+  try {
+    await deleteNote(note);
+    closeConfirm();
+    toast('Deleted');
+  } catch (err) {
+    closeConfirm();
+    toast(err.message, true);
+  }
+});
 
 el.refresh.addEventListener('click', () => loadBrowse({ force: true }));
 

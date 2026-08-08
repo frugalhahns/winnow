@@ -265,7 +265,36 @@ input#search::placeholder { color: var(--ink-faint); }
 
 .note-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 
+/* Each row is a clipping window. The delete action sits underneath, and the
+ * card slides left to uncover it. */
+.note-row {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.note-del {
+  position: absolute;
+  inset: 0 0 0 auto;
+  /* Sits behind the card, which slides away to uncover it. */
+  z-index: 0;
+  width: var(--swipe, 96px);
+  border: 0;
+  background: var(--danger);
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .note {
+  position: relative;
+  z-index: 1;
+  transform: translateX(0);
+  transition: transform .18s ease;
+  /* Let vertical scrolling through; the horizontal axis is ours. */
+  touch-action: pan-y;
   padding: 14px 16px;
   background: var(--bg-raised);
   border: 1px solid var(--line-soft);
@@ -304,6 +333,12 @@ input#search::placeholder { color: var(--ink-faint); }
   color: var(--ink-dim);
 }
 
+/* No swipe on a mouse, so hover or keyboard focus reveals the same action. */
+@media (hover: hover) {
+  .note-row:hover .note,
+  .note-row:focus-within .note { transform: translateX(calc(var(--swipe, 96px) * -1)); }
+}
+
 .empty {
   padding: 56px 20px;
   text-align: center;
@@ -339,11 +374,30 @@ input#search::placeholder { color: var(--ink-faint); }
   box-shadow: 0 24px 60px rgb(0 0 0 / .5);
 }
 
+.sheet.sheet-sm { width: min(380px, 100%); }
+
 .sheet h2 {
   margin: 0 0 12px;
   font-family: var(--font-mark);
   font-size: 1.2rem;
   font-weight: 500;
+}
+
+.confirm-note {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line-soft);
+  border-left: 2px solid var(--danger);
+  border-radius: 9px;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+button.primary.is-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
 }
 
 .sheet label {

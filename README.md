@@ -54,6 +54,15 @@ page at any time; "Disconnect" in the app only clears it from this device.
 Notes are always rendered as text, never as HTML, so a note containing markup
 cannot execute.
 
+## Deleting a note
+
+Swipe a note left to uncover **Delete**, then confirm. On a desktop there is no
+swipe, so hovering a note (or tabbing to it) slides the same button into view.
+
+Deleting rewrites `data/notes.json` in the notes repo and commits. The original
+capture stays in `archive/`, so nothing is truly gone. A category that loses its
+last note disappears with it. `NOTES.md` catches up on the next sweep.
+
 ## Adding another device
 
 You only enter the token once per browser, but "once per browser" still means
