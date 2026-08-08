@@ -39,6 +39,7 @@ const el = {
   cfgErr: $('#cfg-err'),
   cfgSave: $('#cfg-save'),
   cfgForget: $('#cfg-forget'),
+  cfgClose: $('#cfg-close'),
   cfgLink: $('#cfg-link'),
   cfgAdvanced: $('#cfg-advanced'),
   settingsBtn: $('#settings-btn'),
@@ -764,6 +765,7 @@ function openSheet() {
 
   const isConnected = connected();
   el.cfgForget.hidden = !isConnected;
+  el.cfgClose.hidden = !isConnected;
   el.cfgLink.hidden = !cfg;
   el.signIn.hidden = !oauthConfigured || Boolean(session);
   el.signInNote.hidden = el.signIn.hidden;
@@ -846,16 +848,18 @@ for (const tab of document.querySelectorAll('.tab')) {
 }
 
 el.settingsBtn.addEventListener('click', openSheet);
+el.cfgClose.addEventListener('click', closeSheet);
 
 el.sheet.addEventListener('click', (e) => {
-  if (e.target === el.sheet && cfg) closeSheet();
+  /* Dismiss only when there is something to go back to. */
+  if (e.target === el.sheet && connected()) closeSheet();
 });
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!el.confirm.hidden) return closeConfirm();
   if (openRow) return closeOpenRow();
-  if (!el.sheet.hidden && cfg) closeSheet();
+  if (!el.sheet.hidden && connected()) closeSheet();
 });
 
 /* Proves the token can actually reach the repo before persisting it, so a typo
