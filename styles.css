@@ -428,6 +428,17 @@ button.primary.is-danger {
   margin: 22px 0 18px;
 }
 
+button.signin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  padding: 13px 22px;
+  margin-top: 4px;
+}
+.gh-mark { width: 17px; height: 17px; fill: currentColor; flex: none; }
+
 #cfg-advanced { margin-top: 18px; }
 #cfg-advanced summary {
   cursor: pointer;

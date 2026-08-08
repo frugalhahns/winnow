@@ -32,6 +32,65 @@ Neither is a secret, so neither is worth typing. Forking Winnow means editing
 those two lines. The sheet's "Writing somewhere else?" section can override them
 per device if you need it.
 
+## Sign in with GitHub
+
+The preferred way in. One tap, nothing typed, on every device.
+
+GitHub requires a client secret to turn an OAuth code into a token and does not
+support PKCE, so a static page cannot complete the handshake alone. `worker/`
+holds that secret. It is the only reason it exists: it never sees a note.
+
+```
+capture / browse   [browser] ------------------> api.github.com
+sign in / refresh  [browser] --> [CF Worker] --> github.com
+```
+
+### 1. Register a GitHub App
+
+**Settings > Developer settings > GitHub Apps > New GitHub App**
+
+| Field | Value |
+| --- | --- |
+| Name | `Winnow` (must be globally unique, add a suffix if taken) |
+| Homepage URL | `https://<you>.github.io/winnow/` |
+| Callback URL | `https://<you>.github.io/winnow/` (trailing slash matters) |
+| Request user authorization (OAuth) during installation | checked |
+| Expire user authorization tokens | checked |
+| Webhook > Active | **unchecked** |
+| Permissions > Repository > Contents | **Read and write** |
+| Where can this GitHub App be installed | Only on this account |
+
+Create it, then **Install App** and select **only** your notes repo.
+
+Note the **Client ID**, and use **Generate a new client secret** to get a secret.
+The secret is shown once.
+
+### 2. Deploy the Worker
+
+```sh
+cd worker
+# put your Client ID in wrangler.toml, and your Pages origin in ALLOWED_ORIGINS
+npx wrangler login
+npx wrangler secret put GITHUB_CLIENT_SECRET   # paste at the prompt
+npx wrangler deploy
+```
+
+Deploy prints a URL like `https://winnow-auth.<you>.workers.dev`.
+
+Free plan covers this many times over: the Worker is hit only at sign-in and
+refresh, a handful of requests per device per day, against 100,000 per day.
+
+### 3. Point the app at it
+
+In `config.js`, fill in `clientId` and `authWorker`, then push. Leave either
+blank and the button hides, falling back to the token flow below.
+
+### What you get
+
+Tokens last 8 hours and refresh silently. The refresh token lasts 6 months.
+Access is limited to the repos you installed the App on. Revoke every device at
+once from **Settings > Applications > Authorized GitHub Apps**.
+
 ### The token
 
 Create at **Settings > Developer settings > Personal access tokens > Fine-grained

@@ -1,0 +1,9 @@
+name = "winnow-auth"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Neither of these is secret. The client secret is set separately with
+#   npx wrangler secret put GITHUB_CLIENT_SECRET
+GITHUB_CLIENT_ID = "REPLACE_WITH_CLIENT_ID"
+ALLOWED_ORIGINS = "https://frugalhahns.github.io,http://localhost:8000"

@@ -10,4 +10,12 @@
 export const CONFIG = {
   owner: 'frugalhahns',
   repo: 'winnow-store',
+
+  /* Sign in with GitHub. Both values are public by design: the client id is
+   * visible in every authorize URL, and the Worker URL is just an endpoint.
+   * The client secret lives only in the Worker.
+   *
+   * Leave either blank and the button hides, falling back to a token. */
+  clientId: '',
+  authWorker: '',
 };

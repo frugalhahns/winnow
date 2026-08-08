@@ -4,15 +4,21 @@
  * A scheduled Action in that repo sweeps the inbox, categorizes with Gemini,
  * and rewrites `data/notes.json`, which the Browse tab reads back.
  *
- * The token lives in localStorage on this device only. Scope it to one repo,
- * Contents: read and write. Nothing here ever renders note text as HTML.
+* Auth is either a GitHub App session (tap to sign in, 8h tokens that refresh)
+ * or a fine-grained PAT as a fallback. Nothing here renders note text as HTML.
  */
 
 import { CONFIG } from './config.js';
 
 const CFG_KEY = 'winnow.cfg';
+const SESSION_KEY = 'winnow.session';
+const STATE_KEY = 'winnow.oauth.state';
 const QUEUE_KEY = 'winnow.queue';
 const API = 'https://api.github.com';
+
+/* Refresh this far before the token actually lapses, so a request in flight
+ * does not expire mid-air. */
+const REFRESH_MARGIN_MS = 120_000;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -40,11 +46,21 @@ const el = {
   confirmBody: $('#confirm-body'),
   confirmYes: $('#confirm-yes'),
   confirmNo: $('#confirm-no'),
+  signIn: $('#signin-btn'),
+  signInNote: $('#signin-note'),
   toast: $('#toast'),
 };
 
 let cfg = loadCfg();
+let session = loadSession();
 let notesCache = null;
+
+const oauthConfigured = Boolean(CONFIG.clientId && CONFIG.authWorker);
+
+/* Either credential will do. A signed-in session wins when both exist. */
+const connected = () => Boolean(session || cfg);
+const owner = () => (cfg && cfg.owner) || CONFIG.owner;
+const repo = () => (cfg && cfg.repo) || CONFIG.repo;
 
 /* ---------------------------------------------------------------- config */
 
@@ -76,18 +92,139 @@ function clearCfg() {
   localStorage.removeItem(CFG_KEY);
 }
 
+/* ------------------------------------------------------------- oauth */
+
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    return s && s.access_token ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(data) {
+  const now = Date.now();
+  session = {
+    access_token: data.access_token,
+    /* GitHub App tokens last 8 hours. If a value is missing, treat the token as
+     * non-expiring rather than refreshing it into oblivion. */
+    expires_at: data.expires_in ? now + data.expires_in * 1000 : null,
+    refresh_token: data.refresh_token || (session && session.refresh_token) || null,
+    refresh_expires_at: data.refresh_token_expires_in
+      ? now + data.refresh_token_expires_in * 1000
+      : null,
+  };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+}
+
+function clearSession() {
+  session = null;
+  localStorage.removeItem(SESSION_KEY);
+}
+
+function redirectUri() {
+  return location.origin + location.pathname;
+}
+
+async function postAuth(path, body) {
+  let res;
+  try {
+    res = await fetch(CONFIG.authWorker.replace(/\/+$/, '') + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new Error('Could not reach the sign-in service. Check your connection.');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.description || data.error || `Sign-in failed (${res.status})`);
+  }
+  return data;
+}
+
+function startSignIn() {
+  /* Random state, checked on return, so another site cannot feed us a code. */
+  const state = crypto.randomUUID();
+  sessionStorage.setItem(STATE_KEY, state);
+
+  const url = new URL('https://github.com/login/oauth/authorize');
+  url.searchParams.set('client_id', CONFIG.clientId);
+  url.searchParams.set('redirect_uri', redirectUri());
+  url.searchParams.set('state', state);
+  location.assign(url.toString());
+}
+
+/* Returns true if this page load was a return trip from GitHub. */
+async function completeSignIn() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('code');
+  const returnedState = params.get('state');
+  const denied = params.get('error');
+
+  if (!code && !denied) return false;
+
+  const expected = sessionStorage.getItem(STATE_KEY);
+  sessionStorage.removeItem(STATE_KEY);
+  history.replaceState(null, '', location.pathname);
+
+  if (denied) throw new Error(params.get('error_description') || 'Sign-in was cancelled.');
+  if (!expected || returnedState !== expected) {
+    throw new Error('Sign-in could not be verified. Start again from this device.');
+  }
+
+  saveSession(await postAuth('/exchange', { code, redirect_uri: redirectUri() }));
+  return true;
+}
+
+async function refreshSession() {
+  if (!session || !session.refresh_token) {
+    clearSession();
+    throw new Error('Session expired. Sign in again.');
+  }
+  try {
+    saveSession(await postAuth('/refresh', { refresh_token: session.refresh_token }));
+  } catch (err) {
+    clearSession();
+    throw new Error(`Session expired. Sign in again. (${err.message})`);
+  }
+}
+
+async function bearerToken() {
+  if (session) {
+    const due = session.expires_at && Date.now() > session.expires_at - REFRESH_MARGIN_MS;
+    if (due) await refreshSession();
+    return session.access_token;
+  }
+  if (cfg) return cfg.token;
+  throw new Error('Not connected.');
+}
+
 /* ------------------------------------------------------------ github api */
 
-async function gh(path, init = {}) {
+async function gh(path, init = {}, retried = false) {
+  const token = await bearerToken();
   const res = await fetch(API + path, {
     ...init,
     headers: {
       Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${cfg.token}`,
+      Authorization: `Bearer ${token}`,
       'X-GitHub-Api-Version': '2022-11-28',
       ...(init.headers || {}),
     },
   });
+
+  /* Rejected before its stated expiry means revoked or clock skew. Refresh
+   * once and retry once, then let the error through. */
+  if (res.status === 401 && session && !retried) {
+    await refreshSession();
+    return gh(path, init, true);
+  }
+
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -142,7 +279,7 @@ function inboxDoc(text, when) {
 
 async function pushNote(item) {
   const when = new Date(item.at);
-  await gh(`/repos/${cfg.owner}/${cfg.repo}/contents/${inboxPath(when, item.id)}`, {
+  await gh(`/repos/${owner()}/${repo()}/contents/${inboxPath(when, item.id)}`, {
     method: 'PUT',
     body: JSON.stringify({
       message: `capture: ${firstLine(item.text, 60)}`,
@@ -184,7 +321,7 @@ function enqueue(text) {
 /* Drains oldest first. Stops on the first failure so ordering holds and a
  * dead network does not burn through the whole queue against a 401. */
 async function flushQueue({ quiet = false } = {}) {
-  if (!cfg) return;
+  if (!connected()) return;
   let items = readQueue();
   if (!items.length) return;
 
@@ -224,7 +361,7 @@ function renderQueue(items) {
 
 /* ---------------------------------------------------------------- browse */
 
-const NOTES_PATH = () => `/repos/${cfg.owner}/${cfg.repo}/contents/data/notes.json`;
+const NOTES_PATH = () => `/repos/${owner()}/${repo()}/contents/data/notes.json`;
 
 /* Returns the sha alongside the data: writing the file back requires it. */
 async function fetchNotesFile() {
@@ -567,11 +704,18 @@ function openSheet() {
   el.cfgOwner.value = (cfg && cfg.owner) || CONFIG.owner;
   el.cfgRepo.value = (cfg && cfg.repo) || CONFIG.repo;
   el.cfgToken.value = cfg ? cfg.token : '';
-  el.cfgForget.hidden = !cfg;
+  el.cfgForget.hidden = !connected();
   el.cfgLink.hidden = !cfg;
   el.cfgErr.hidden = true;
+
+  el.signIn.hidden = !oauthConfigured || Boolean(session);
+  el.signInNote.hidden = el.signIn.hidden;
+  /* Without a sign-in button there is nothing above the fold, so open the
+   * token section rather than showing an apparently empty dialog. */
+  el.cfgAdvanced.open = el.signIn.hidden && !connected();
+
   el.sheet.hidden = false;
-  el.cfgToken.focus();
+  (el.signIn.hidden ? el.cfgToken : el.signIn).focus();
 }
 
 function closeSheet() {
@@ -585,7 +729,7 @@ el.form.addEventListener('submit', async (e) => {
   const text = el.note.value.trim();
   if (!text) return;
 
-  if (!cfg) {
+  if (!connected()) {
     openSheet();
     return;
   }
@@ -689,13 +833,24 @@ el.cfgLink.addEventListener('click', async () => {
   }
 });
 
+el.signIn.addEventListener('click', () => {
+  el.signIn.disabled = true;
+  el.signIn.textContent = 'Redirecting';
+  startSignIn();
+});
+
 el.cfgForget.addEventListener('click', () => {
+  const hadSession = Boolean(session);
+  clearSession();
   clearCfg();
   el.cfgToken.value = '';
-  el.cfgForget.hidden = true;
-  el.cfgLink.hidden = true;
   notesCache = null;
-  toast('Token removed from this device');
+  openSheet();
+  toast(
+    hadSession
+      ? 'Signed out of this device. Revoke access from GitHub to cover them all.'
+      : 'Token removed from this device'
+  );
 });
 
 function showCfgError(message) {
@@ -765,7 +920,17 @@ async function boot() {
   updateHint();
   el.app.hidden = false;
 
-  if (handoff) {
+  /* Returning from GitHub takes priority: this load carries a one-use code. */
+  let returned = false;
+  try {
+    returned = await completeSignIn();
+    if (returned) toast('Signed in');
+  } catch (err) {
+    openSheet();
+    showCfgError(err.message);
+  }
+
+  if (!returned && handoff) {
     const result = await connect({ owner: CONFIG.owner, repo: CONFIG.repo, token: handoff });
     if (result.ok) {
       toast('Connected');
@@ -776,11 +941,11 @@ async function boot() {
       el.cfgToken.value = handoff;
       showCfgError(result.message);
     }
-  } else if (!cfg) {
+  } else if (!connected() && el.sheet.hidden) {
     openSheet();
   }
 
-  if (cfg) flushQueue({ quiet: true });
+  if (connected()) flushQueue({ quiet: true });
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {
