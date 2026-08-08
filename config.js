@@ -16,6 +16,6 @@ export const CONFIG = {
    * The client secret lives only in the Worker.
    *
    * Leave either blank and the button hides, falling back to a token. */
-  clientId: '',
+  clientId: 'Iv23lidnKAXSsoshm1ra',
   authWorker: '',
 };
