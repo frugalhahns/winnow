@@ -20,6 +20,9 @@ const API = 'https://api.github.com';
  * does not expire mid-air. */
 const REFRESH_MARGIN_MS = 120_000;
 
+/* Each pending item costs one extra request to read, so cap the listing. */
+const PENDING_MAX = 25;
+
 const $ = (sel) => document.querySelector(sel);
 
 const el = {
@@ -61,6 +64,7 @@ const el = {
 let cfg = loadCfg();
 let session = loadSession();
 let notesCache = null;
+let pendingCache = [];
 
 const oauthConfigured = Boolean(CONFIG.clientId && CONFIG.authWorker);
 
@@ -348,8 +352,10 @@ async function flushQueue({ quiet = false } = {}) {
     sent += 1;
   }
 
-  if (sent && !quiet) {
-    toast(sent === 1 ? 'Saved' : `Saved ${sent} notes`);
+  if (sent) {
+    /* Browse caches; a fresh capture must not be missing from Pending. */
+    notesCache = null;
+    if (!quiet) toast(sent === 1 ? 'Saved' : `Saved ${sent} notes`);
   }
 }
 
@@ -384,12 +390,118 @@ async function fetchNotes() {
   return (await fetchNotesFile()).data;
 }
 
+/* ------------------------------------------------------- pending inbox */
+
+/* Captures that have reached the repo but not yet been sorted. Without this
+ * a note is invisible between writing it and the next sweep. */
+async function fetchPending() {
+  let listing;
+  try {
+    const res = await gh(`/repos/${owner()}/${repo()}/contents/inbox`);
+    listing = await res.json();
+  } catch (err) {
+    /* No inbox directory yet is not an error worth showing. */
+    if (err.status === 404) return [];
+    throw err;
+  }
+  if (!Array.isArray(listing)) return [];
+
+  const files = listing
+    .filter((f) => f.type === 'file' && f.name.endsWith('.md'))
+    .sort((a, b) => b.name.localeCompare(a.name))
+    .slice(0, PENDING_MAX);
+
+  /* The directory listing carries no content, so each file needs its own read. */
+  return Promise.all(
+    files.map(async (f) => {
+      const res = await gh(`/repos/${owner()}/${repo()}/contents/${f.path}`);
+      const body = await res.json();
+      const raw = fromBase64(body.content);
+      const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+      const text = (match ? match[2] : raw).trim();
+      const captured = match && (match[1].match(/captured:\s*(\S+)/) || [])[1];
+      return { path: f.path, sha: body.sha, text, captured: captured || null };
+    })
+  );
+}
+
+async function deletePending(item) {
+  await gh(`/repos/${owner()}/${repo()}/contents/${item.path}`, {
+    method: 'DELETE',
+    body: JSON.stringify({
+      message: `discard: ${firstLine(item.text, 60)}`,
+      sha: item.sha,
+    }),
+  });
+  pendingCache = pendingCache.filter((p) => p.path !== item.path);
+  renderBrowse(notesCache);
+}
+
+function renderPending(items) {
+  const section = document.createElement('section');
+  section.className = 'category is-pending';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = 'Pending';
+
+  const meta = document.createElement('p');
+  meta.className = 'cat-meta';
+  meta.textContent = `${items.length} waiting for the next sweep, daily at 11:00 UTC`;
+
+  const list = document.createElement('ul');
+  list.className = 'note-list';
+
+  for (const item of items) {
+    const row = document.createElement('li');
+    row.className = 'note-row';
+
+    const card = document.createElement('article');
+    card.className = 'note';
+
+    const body = document.createElement('p');
+    body.className = 'n-body';
+    body.textContent = item.text;
+    card.append(body);
+
+    if (item.captured) {
+      const foot = document.createElement('div');
+      foot.className = 'n-foot';
+      const when = document.createElement('span');
+      when.textContent = formatDate(item.captured);
+      foot.append(when);
+      card.append(foot);
+    }
+
+    const del = document.createElement('button');
+    del.className = 'note-del';
+    del.type = 'button';
+    del.textContent = 'Discard';
+    del.setAttribute('aria-label', `Discard pending note: ${firstLine(item.text, 40)}`);
+    del.addEventListener('click', () =>
+      askDelete(firstLine(item.text, 80), () => deletePending(item))
+    );
+
+    row.append(card, del);
+    attachSwipe(row, card);
+    list.append(row);
+  }
+
+  section.append(h3, meta, list);
+  return section;
+}
+
 async function loadBrowse({ force = false } = {}) {
   if (notesCache && !force) return renderBrowse(notesCache);
 
   el.browseBody.replaceChildren(emptyState('Loading', 'Fetching your notes.'));
   try {
-    notesCache = await fetchNotes();
+    /* Pending is a nicety: never let it fail the whole view. */
+    const [notes, pending] = await Promise.all([
+      fetchNotes(),
+      fetchPending().catch(() => []),
+    ]);
+    notesCache = notes;
+    pendingCache = pending;
     renderBrowse(notesCache);
   } catch (err) {
     if (err.status === 404) {
@@ -455,7 +567,11 @@ function renderBrowse(data) {
 
   el.browseBody.replaceChildren();
 
-  if (!matching.length) {
+  /* Search filters filed notes only; pending items are transient, and hiding
+   * them mid-search would look like they had been lost. */
+  if (!q && pendingCache.length) el.browseBody.append(renderPending(pendingCache));
+
+  if (!matching.length && !(!q && pendingCache.length)) {
     el.browseBody.append(
       q
         ? emptyState('No matches', `Nothing matches "${el.search.value.trim()}".`)
@@ -549,6 +665,21 @@ function renderNote(n) {
     li.append(list);
   }
 
+  /* Rambling notes lose the most to summarizing, so keep the original one tap
+   * away. Skipped when the summary is already the raw text verbatim. */
+  const original = (n.body || '').trim();
+  if (original && original !== (n.summary || '').trim()) {
+    const details = document.createElement('details');
+    details.className = 'n-original';
+    const sum = document.createElement('summary');
+    sum.textContent = 'Show original';
+    const pre = document.createElement('p');
+    pre.className = 'n-original-text';
+    pre.textContent = original;
+    details.append(sum, pre);
+    li.append(details);
+  }
+
   const foot = document.createElement('div');
   foot.className = 'n-foot';
   for (const t of n.tags || []) {
@@ -569,7 +700,9 @@ function renderNote(n) {
   del.type = 'button';
   del.textContent = 'Delete';
   del.setAttribute('aria-label', `Delete note: ${n.title || 'Untitled'}`);
-  del.addEventListener('click', () => askDelete(n));
+  del.addEventListener('click', () =>
+    askDelete(n.title || n.summary || n.id, () => deleteNote(n))
+  );
 
   /* Card first so Tab reaches the note's link before the delete button. */
   row.append(li, del);
@@ -672,11 +805,12 @@ function attachSwipe(row, card) {
 
 /* --------------------------------------------------------------- delete */
 
+/* { label, run } so the same dialog covers filed notes and pending captures. */
 let pendingDelete = null;
 
-function askDelete(note) {
-  pendingDelete = note;
-  el.confirmBody.textContent = note.title || note.summary || note.id;
+function askDelete(label, run) {
+  pendingDelete = { label, run };
+  el.confirmBody.textContent = label;
   el.confirm.hidden = false;
   el.confirmYes.focus();
 }
@@ -983,13 +1117,13 @@ el.confirm.addEventListener('click', (e) => {
 });
 
 el.confirmYes.addEventListener('click', async () => {
-  const note = pendingDelete;
-  if (!note) return;
+  const job = pendingDelete;
+  if (!job) return;
 
   el.confirmYes.disabled = true;
   el.confirmYes.textContent = 'Deleting';
   try {
-    await deleteNote(note);
+    await job.run();
     closeConfirm();
     toast('Deleted');
   } catch (err) {

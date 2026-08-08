@@ -321,6 +321,37 @@ input#search::placeholder { color: var(--ink-faint); }
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Pending captures are provisional, so they read as sketched rather than filed. */
+.category.is-pending .note {
+  border-left-style: dashed;
+  border-left-color: var(--ink-faint);
+}
+.category.is-pending .n-body { color: var(--ink); }
+
+.n-original { margin-top: 10px; }
+.n-original summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--ink-faint);
+  list-style: none;
+}
+.n-original summary::-webkit-details-marker { display: none; }
+.n-original summary::before { content: '+ '; }
+.n-original[open] summary::before { content: '- '; }
+.n-original summary:hover { color: var(--ink-dim); }
+.n-original-text {
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  font-size: 0.87rem;
+  line-height: 1.55;
+  color: var(--ink-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .n-links {
   list-style: none;
   margin: 10px 0 0;
