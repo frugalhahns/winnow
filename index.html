@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12100e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Winnow">
+<title>Winnow</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<main id="app" hidden>
+
+  <header class="topbar">
+    <h1 class="wordmark">Winnow</h1>
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" role="tab" data-view="capture" aria-selected="true">Capture</button>
+      <button class="tab" role="tab" data-view="browse" aria-selected="false">Browse</button>
+    </nav>
+    <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
+    </button>
+  </header>
+
+  <!-- ── Capture ───────────────────────────────────────────── -->
+  <section class="view is-active" id="view-capture">
+    <form id="capture-form" autocomplete="off">
+      <textarea id="note" name="note" rows="8" spellcheck="true"
+        placeholder="Drop a thought, a link, a half-formed idea&hellip;"
+        aria-label="Note or URL"></textarea>
+      <div class="capture-foot">
+        <span class="hint" id="capture-hint"></span>
+        <button type="submit" class="primary" id="submit-btn">Winnow it</button>
+      </div>
+    </form>
+    <ul class="queue" id="queue" aria-live="polite"></ul>
+  </section>
+
+  <!-- ── Browse ────────────────────────────────────────────── -->
+  <section class="view" id="view-browse">
+    <div class="browse-bar">
+      <input type="search" id="search" placeholder="Search notes" aria-label="Search notes">
+      <button class="ghost" id="refresh-btn">Refresh</button>
+    </div>
+    <div id="browse-body"></div>
+  </section>
+
+</main>
+
+<!-- ── Setup / settings ────────────────────────────────────── -->
+<div class="sheet-backdrop" id="sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <h2 id="sheet-title">Connect Winnow</h2>
+    <p class="muted">
+      Winnow writes straight to your private notes repo. It needs a
+      <strong>fine-grained personal access token</strong> scoped to that one repo
+      with <em>Contents: Read&nbsp;and&nbsp;write</em>. Nothing else.
+    </p>
+    <p class="muted small">
+      The token is stored in this browser only (localStorage). It never leaves your
+      device except to call api.github.com. Use a token scoped to a single repo so a
+      leak can do nothing but write notes.
+    </p>
+
+    <label for="cfg-owner">GitHub username</label>
+    <input id="cfg-owner" placeholder="frugalhahns" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+    <label for="cfg-repo">Private notes repo</label>
+    <input id="cfg-repo" placeholder="winnow-store" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+    <label for="cfg-token">Fine-grained token</label>
+    <input id="cfg-token" type="password" placeholder="github_pat_&hellip;" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+    <p class="err" id="cfg-err" hidden></p>
+
+    <div class="sheet-foot">
+      <button class="ghost" id="cfg-forget" hidden>Disconnect</button>
+      <button class="primary" id="cfg-save">Verify &amp; save</button>
+    </div>
+
+    <p class="muted small">
+      <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">
+        Create a token &rarr;
+      </a>
+      Resource owner: your account &middot; Repository access: only your notes repo &middot;
+      Permissions: Contents &rarr; Read and write.
+    </p>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="app.js" type="module"></script>
+</body>
+</html>

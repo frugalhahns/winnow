@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Winnow">
+  <rect width="512" height="512" fill="#12100e"/>
+  <g fill="none" stroke="#d9a441" stroke-width="21" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M175 213 L256 325 L337 213"/>
+  </g>
+  <g fill="#8a6a2c">
+    <circle cx="204" cy="161" r="9"/>
+    <circle cx="256" cy="142" r="9"/>
+    <circle cx="308" cy="161" r="9"/>
+  </g>
+  <circle cx="256" cy="382" r="15" fill="#d9a441"/>
+</svg>
