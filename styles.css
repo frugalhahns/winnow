@@ -351,6 +351,7 @@ input#search::placeholder { color: var(--ink-faint); }
   font-size: 0.92rem;
 }
 .empty strong { display: block; color: var(--ink-dim); font-weight: 500; margin-bottom: 6px; }
+.empty-action { display: inline-block; margin-top: 12px; color: var(--accent); }
 
 /* setup sheet */
 

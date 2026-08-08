@@ -386,12 +386,36 @@ async function loadBrowse({ force = false } = {}) {
     renderBrowse(notesCache);
   } catch (err) {
     if (err.status === 404) {
-      el.browseBody.replaceChildren(
-        emptyState(
-          'Nothing winnowed yet',
-          'The daily sweep has not run. Capture a few notes, then trigger the workflow in your notes repo, or wait for the next scheduled run.'
-        )
-      );
+      /* A 404 is ambiguous: the file may be missing, or this credential may not
+       * be able to see the repo at all. GitHub returns 404 rather than 403 for
+       * things you are not allowed to know exist. Ask about the repo itself. */
+      let reachable = true;
+      try {
+        await gh(`/repos/${owner()}/${repo()}`);
+      } catch {
+        reachable = false;
+      }
+
+      if (reachable) {
+        el.browseBody.replaceChildren(
+          emptyState(
+            'Nothing winnowed yet',
+            'The repo is reachable but data/notes.json is missing. Run the sweep in your notes repo, or wait for the next scheduled one.'
+          )
+        );
+      } else {
+        el.browseBody.replaceChildren(
+          emptyState(
+            `Cannot reach ${owner()}/${repo()}`,
+            session
+              ? 'Signed in, but this account cannot see that repo. The Winnow GitHub App is most likely not installed on it, or its Contents permission was never granted.'
+              : 'This token cannot reach that repo. Check that it grants Contents access to it.',
+            session
+              ? { label: 'Install the app', href: 'https://github.com/settings/installations' }
+              : null
+          )
+        );
+      }
       return;
     }
     el.browseBody.replaceChildren(emptyState('Could not load notes', err.message));
@@ -670,12 +694,22 @@ function formatDate(iso) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function emptyState(headline, detail) {
+function emptyState(headline, detail, action = null) {
   const div = document.createElement('div');
   div.className = 'empty';
   const strong = document.createElement('strong');
   strong.textContent = headline;
   div.append(strong, document.createTextNode(detail));
+
+  if (action) {
+    const a = document.createElement('a');
+    a.href = action.href;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = action.label;
+    a.className = 'empty-action';
+    div.append(document.createElement('br'), a);
+  }
   return div;
 }
 
