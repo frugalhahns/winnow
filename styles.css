@@ -178,6 +178,32 @@ textarea#note:focus {
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
+.dupe {
+  margin-top: 12px;
+  padding: 12px 15px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: 10px;
+  animation: rise .18s ease both;
+}
+.dupe-head {
+  margin: 0 0 6px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.dupe-line {
+  margin: 0 0 3px;
+  font-size: 0.83rem;
+  color: var(--ink-dim);
+}
+.dupe-foot {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-faint);
+}
+
 .capture-foot {
   display: flex;
   align-items: center;

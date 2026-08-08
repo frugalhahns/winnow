@@ -31,6 +31,7 @@ const el = {
   note: $('#note'),
   submit: $('#submit-btn'),
   hint: $('#capture-hint'),
+  dupeWarn: $('#dupe-warn'),
   queue: $('#queue'),
   search: $('#search'),
   refresh: $('#refresh-btn'),
@@ -65,6 +66,7 @@ let cfg = loadCfg();
 let session = loadSession();
 let notesCache = null;
 let pendingCache = [];
+let urlIndex = null;
 
 const oauthConfigured = Boolean(CONFIG.clientId && CONFIG.authWorker);
 
@@ -502,6 +504,7 @@ async function loadBrowse({ force = false } = {}) {
     ]);
     notesCache = notes;
     pendingCache = pending;
+    urlIndex = buildUrlIndex(notes);
     renderBrowse(notesCache);
   } catch (err) {
     if (err.status === 404) {
@@ -851,6 +854,7 @@ async function deleteNote(note) {
   });
 
   notesCache = next;
+  urlIndex = buildUrlIndex(next);
   closeOpenRow();
   renderBrowse(next);
 
@@ -885,6 +889,49 @@ async function deleteArchived(note) {
     if (err.status === 404) return null;
     return false;
   }
+}
+
+/* ------------------------------------------------------ duplicate check */
+
+const TRACKING_PARAM = /^(utm_.*|fbclid|gclid|mc_[ce]id|igshid|si|ref|ref_src|spm|_hsenc|_hsmi)$/i;
+
+/* Two URLs that differ only by tracking junk, scheme, www or a trailing slash
+ * are the same link as far as anyone reading their own notes is concerned. */
+function normalizeUrl(raw) {
+  try {
+    const u = new URL(String(raw).trim());
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    u.protocol = 'https:';
+    u.hash = '';
+    u.hostname = u.hostname.replace(/^www\./i, '').toLowerCase();
+    for (const key of [...u.searchParams.keys()]) {
+      if (TRACKING_PARAM.test(key)) u.searchParams.delete(key);
+    }
+    u.searchParams.sort();
+    return u.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function urlsIn(text) {
+  const found = String(text).match(/https?:\/\/[^\s<>()[\]{}"']+/g) || [];
+  return found.map((u) => u.replace(/[.,;:!?)\]]+$/, ''));
+}
+
+/* normalized url -> { note, category }, rebuilt whenever notes change. */
+function buildUrlIndex(data) {
+  const index = new Map();
+  for (const cat of (data && data.categories) || []) {
+    for (const note of cat.notes || []) {
+      const urls = (note.links || []).map((l) => l.url).concat(note.url ? [note.url] : []);
+      for (const raw of urls) {
+        const key = normalizeUrl(raw);
+        if (key && !index.has(key)) index.set(key, { note, category: cat.name });
+      }
+    }
+  }
+  return index;
 }
 
 /* Only http(s) becomes a link. Blocks javascript: and data: URLs from the model. */
@@ -1011,6 +1058,7 @@ el.form.addEventListener('submit', async (e) => {
   enqueue(text);
   el.note.value = '';
   updateHint();
+  checkDuplicates();
 
   await flushQueue();
   el.submit.disabled = false;
@@ -1025,7 +1073,64 @@ el.note.addEventListener('keydown', (e) => {
   }
 });
 
-el.note.addEventListener('input', updateHint);
+let dupeTimer;
+el.note.addEventListener('input', () => {
+  updateHint();
+  clearTimeout(dupeTimer);
+  dupeTimer = setTimeout(checkDuplicates, 250);
+});
+
+/* The cheapest duplicate to deal with is the one never written. Warn while the
+ * note is still in the box, rather than merging it away afterwards. */
+function checkDuplicates() {
+  el.dupeWarn.replaceChildren();
+  el.dupeWarn.hidden = true;
+  if (!urlIndex || !urlIndex.size) return;
+
+  const seen = new Set();
+  const hits = [];
+  for (const raw of urlsIn(el.note.value)) {
+    const key = normalizeUrl(raw);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const hit = urlIndex.get(key);
+    if (hit) hits.push(hit);
+  }
+  if (!hits.length) return;
+
+  const head = document.createElement('p');
+  head.className = 'dupe-head';
+  head.textContent =
+    hits.length === 1 ? 'You have saved this link before' : 'You have saved these links before';
+  el.dupeWarn.append(head);
+
+  for (const { note, category } of hits) {
+    const line = document.createElement('p');
+    line.className = 'dupe-line';
+    line.textContent = `${note.title} · ${category} · ${formatDate(note.captured)}`;
+    el.dupeWarn.append(line);
+  }
+
+  const note = document.createElement('p');
+  note.className = 'dupe-foot';
+  note.textContent = 'Saving anyway is fine: the sweep folds it into the existing note.';
+  el.dupeWarn.append(note);
+
+  el.dupeWarn.hidden = false;
+}
+
+/* Browse loads notes lazily, but the duplicate check needs them on the Capture
+ * tab. Warm the cache quietly and never let it surface an error. */
+async function prefetchNotes() {
+  if (!connected() || notesCache) return;
+  try {
+    notesCache = await fetchNotes();
+    urlIndex = buildUrlIndex(notesCache);
+    checkDuplicates();
+  } catch {
+    /* Browse will report properly if something is actually wrong. */
+  }
+}
 
 function updateHint() {
   const n = el.note.value.trim().length;
@@ -1260,7 +1365,10 @@ async function boot() {
     openSheet();
   }
 
-  if (connected()) flushQueue({ quiet: true });
+  if (connected()) {
+    flushQueue({ quiet: true });
+    prefetchNotes();
+  }
 
   registerServiceWorker();
 }
