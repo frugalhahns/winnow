@@ -321,6 +321,30 @@ input#search::placeholder { color: var(--ink-faint); }
   white-space: pre-wrap;
   word-break: break-word;
 }
+.n-links {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+}
+.n-links li { font-size: 0.87rem; line-height: 1.4; }
+.n-links a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.n-links a:hover { border-bottom-color: var(--accent); }
+.n-links li::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin: 0 8px 3px 2px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+}
+
 .note .n-foot {
   margin-top: 9px;
   display: flex;

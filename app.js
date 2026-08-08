@@ -470,7 +470,8 @@ function renderBrowse(data) {
 }
 
 function noteText(n) {
-  return [n.title, n.summary, n.url, (n.tags || []).join(' ')]
+  const links = (n.links || []).map((l) => `${l.url} ${l.label}`).join(' ');
+  return [n.title, n.summary, n.url, links, (n.tags || []).join(' ')]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
@@ -505,14 +506,19 @@ function renderNote(n) {
   const li = document.createElement('article');
   li.className = 'note';
 
+  /* Older notes predate `links` and only carry a single `url`. */
+  const links = (Array.isArray(n.links) ? n.links : n.url ? [{ url: n.url, label: n.title }] : [])
+    .filter((l) => l && isHttpUrl(l.url));
+  const single = links.length === 1;
+
   const title = document.createElement('p');
   title.className = 'n-title';
-  if (n.url && isHttpUrl(n.url)) {
+  if (single) {
     const a = document.createElement('a');
-    a.href = n.url;
+    a.href = links[0].url;
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
-    a.textContent = n.title || n.url;
+    a.textContent = n.title || links[0].url;
     title.append(a);
   } else {
     title.textContent = n.title || 'Untitled';
@@ -524,6 +530,23 @@ function renderNote(n) {
     body.className = 'n-body';
     body.textContent = n.summary;
     li.append(body);
+  }
+
+  /* With several links, the title cannot stand in for them, so list them all. */
+  if (!single && links.length) {
+    const list = document.createElement('ul');
+    list.className = 'n-links';
+    for (const l of links) {
+      const item = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = l.url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = l.label || l.url;
+      item.append(a);
+      list.append(item);
+    }
+    li.append(list);
   }
 
   const foot = document.createElement('div');
