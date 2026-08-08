@@ -40,6 +40,11 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* Any rule below that sets `display` on a class would otherwise outrank the UA
+ * stylesheet's [hidden] rule and leave hidden elements on screen. Settle it
+ * once here rather than remembering to guard each one. */
+[hidden] { display: none !important; }
+
 html { -webkit-text-size-adjust: 100%; }
 
 body {
@@ -360,8 +365,6 @@ input#search::placeholder { color: var(--ink-faint); }
   z-index: 50;
 }
 
-/* `display: grid` above outranks the UA rule for [hidden], so restate it. */
-.sheet-backdrop[hidden] { display: none; }
 
 .sheet {
   width: min(460px, 100%);

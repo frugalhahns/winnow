@@ -4,7 +4,7 @@
  * A scheduled Action in that repo sweeps the inbox, categorizes with Gemini,
  * and rewrites `data/notes.json`, which the Browse tab reads back.
  *
-* Auth is either a GitHub App session (tap to sign in, 8h tokens that refresh)
+ * Auth is either a GitHub App session (tap to sign in, 8h tokens that refresh)
  * or a fine-grained PAT as a fallback. Nothing here renders note text as HTML.
  */
 
@@ -148,6 +148,9 @@ async function postAuth(path, body) {
 }
 
 function startSignIn() {
+  /* Belt and braces: never send GitHub a blank client_id, whatever the UI did. */
+  if (!oauthConfigured) throw new Error('Sign-in is not configured for this build yet.');
+
   /* Random state, checked on return, so another site cannot feed us a code. */
   const state = crypto.randomUUID();
   sessionStorage.setItem(STATE_KEY, state);
@@ -834,9 +837,18 @@ el.cfgLink.addEventListener('click', async () => {
 });
 
 el.signIn.addEventListener('click', () => {
+  const label = el.signIn.textContent;
   el.signIn.disabled = true;
   el.signIn.textContent = 'Redirecting';
-  startSignIn();
+  try {
+    startSignIn();
+  } catch (err) {
+    /* Navigation never happened, so put the button back rather than leaving it
+     * stuck on "Redirecting" forever. */
+    el.signIn.disabled = false;
+    el.signIn.textContent = label;
+    showCfgError(err.message);
+  }
 });
 
 el.cfgForget.addEventListener('click', () => {
