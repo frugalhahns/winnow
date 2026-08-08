@@ -418,6 +418,19 @@ async function loadBrowse({ force = false } = {}) {
       }
       return;
     }
+    /* GitHub says this when an App is installed but lacks the permission the
+     * endpoint needs. Distinct from 404, which means it cannot see the repo. */
+    if (err.status === 403 && /not accessible by integration/i.test(err.message)) {
+      el.browseBody.replaceChildren(
+        emptyState(
+          'The app is installed but not permitted',
+          'Winnow needs Contents: Read and write. Grant it on the app, then approve the change on the installation, since new permissions do not apply until accepted.',
+          { label: 'Review permissions', href: 'https://github.com/settings/installations' }
+        )
+      );
+      return;
+    }
+
     el.browseBody.replaceChildren(emptyState('Could not load notes', err.message));
   }
 }
