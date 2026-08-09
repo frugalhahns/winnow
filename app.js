@@ -66,6 +66,13 @@ const el = {
   statusText: $('#status-text'),
   statusDetail: $('#status-detail'),
   tokenHelp: $('#token-help'),
+  rename: $('#rename'),
+  renameTitle: $('#rename-title'),
+  renameInput: $('#rename-input'),
+  renameOptions: $('#rename-options'),
+  renameErr: $('#rename-err'),
+  renameSave: $('#rename-save'),
+  renameCancel: $('#rename-cancel'),
   toast: $('#toast'),
 };
 
@@ -619,6 +626,78 @@ async function applyMerge(ids) {
   return next;
 }
 
+/* Renaming and merging a category are the same operation: move every note into
+ * a folder. If the destination already exists, that is a merge. */
+async function moveCategory(from, to) {
+  const target = String(to).trim();
+  if (!target) throw new Error('Give the category a name.');
+  if (target === from) return notesCache;
+
+  const cat = (notesCache.categories || []).find((c) => c.name === from);
+  if (!cat) throw new Error(`${from} is no longer there.`);
+
+  const folder = target.replace(/[\/\\:]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Unsorted';
+
+  for (const note of cat.notes) {
+    const { raw, sha } = await fetchNoteFile(note);
+    const moved = withCategory(raw, target);
+    const dest = `notes/${folder}/${note.path.split('/').pop()}`;
+
+    /* Write the new file before removing the old one, so an interruption
+     * leaves a duplicate rather than a hole. */
+    await gh(filePath(dest), {
+      method: 'PUT',
+      body: JSON.stringify({ message: `move: ${firstLine(note.title, 40)} to ${target}`, content: toBase64(moved) }),
+    });
+    await gh(filePath(note.path), {
+      method: 'DELETE',
+      body: JSON.stringify({ message: `moved to ${target}`, sha }),
+    });
+    note.path = dest;
+  }
+
+  /* Fold into the destination if it already exists, otherwise just rename. */
+  const rest = notesCache.categories.filter((c) => c.name !== from);
+  const existing = rest.find((c) => c.name === target);
+  if (existing) existing.notes = [...existing.notes, ...cat.notes];
+  else rest.push({ ...cat, name: target });
+
+  const categories = rest
+    .filter((c) => c.notes.length)
+    .sort((a, b) => b.notes.length - a.notes.length || a.name.localeCompare(b.name));
+
+  const next = { ...notesCache, categories, count: categories.reduce((n, c) => n + c.notes.length, 0) };
+
+  try {
+    const current = await fetchNotesFile();
+    await gh(NOTES_PATH(), {
+      method: 'PUT',
+      body: JSON.stringify({
+        message: `index: ${existing ? 'merge' : 'rename'} category ${from} into ${target}`,
+        content: toBase64(JSON.stringify(next, null, 2) + '\n'),
+        sha: current.sha,
+      }),
+    });
+  } catch {
+    /* Derived; the next sweep reconciles it. */
+  }
+
+  notesCache = next;
+  urlIndex = buildUrlIndex(next);
+  return next;
+}
+
+/* Rewrites just the category line, so hand edits elsewhere in the file survive. */
+function withCategory(raw, category) {
+  const match = raw.match(/^(---\r?\n)([\s\S]*?)(\r?\n---)/);
+  if (!match) return raw;
+  const front = match[2]
+    .split(/\r?\n/)
+    .map((line) => (/^category:/.test(line) ? `category: ${yamlScalar(category)}` : line))
+    .join('\n');
+  return raw.replace(match[0], `${match[1]}${front}${match[3]}`);
+}
+
 async function fetchSuggestions() {
   try {
     const res = await gh(SUGGESTIONS_PATH());
@@ -640,6 +719,7 @@ async function resolveSuggestion(key, { remember }) {
   const next = {
     ...data,
     groups: (data.groups || []).filter((g) => g.key !== key),
+    categoryGroups: (data.categoryGroups || []).filter((g) => g.key !== key),
     dismissed: remember
       ? [...new Set([...(data.dismissed || []), key])]
       : data.dismissed || [],
@@ -654,6 +734,78 @@ async function resolveSuggestion(key, { remember }) {
     }),
   });
   suggestionsCache = next;
+}
+
+function renderCategorySuggestions(groups) {
+  const section = document.createElement('section');
+  section.className = 'category is-suggested';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = 'Might be one category';
+
+  const meta = document.createElement('p');
+  meta.className = 'cat-meta';
+  meta.textContent = 'Merging moves every note inside them. Nothing happens until you say so.';
+  section.append(h3, meta);
+
+  for (const group of groups) {
+    const card = document.createElement('div');
+    card.className = 'suggestion';
+
+    const reason = document.createElement('p');
+    reason.className = 'sug-reason';
+    reason.textContent = group.reason || 'These look like the same shelf.';
+
+    const list = document.createElement('ul');
+    list.className = 'sug-titles';
+    for (const name of group.categories) {
+      const li = document.createElement('li');
+      li.textContent = name === group.into ? `${name} (kept)` : name;
+      list.append(li);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'sug-actions';
+
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'ghost';
+    dismiss.textContent = 'Keep separate';
+    dismiss.addEventListener('click', async () => {
+      dismiss.disabled = true;
+      try {
+        await resolveSuggestion(group.key, { remember: true });
+        renderBrowse(notesCache);
+      } catch (err) {
+        dismiss.disabled = false;
+        toast(err.message, true);
+      }
+    });
+
+    const merge = document.createElement('button');
+    merge.type = 'button';
+    merge.className = 'primary';
+    merge.textContent = `Merge into ${group.into}`;
+    merge.addEventListener('click', () =>
+      askDelete(group.categories.join('  +  '), async () => {
+        for (const name of group.categories) {
+          if (name !== group.into) await moveCategory(name, group.into);
+        }
+        await resolveSuggestion(group.key, { remember: false });
+        renderBrowse(notesCache);
+      }, {
+        title: 'Merge these categories?',
+        detail: `Every note moves into "${group.into}". The notes themselves are untouched, and you can rename or split them again at any time.`,
+        confirmLabel: 'Merge',
+        danger: false,
+      })
+    );
+
+    actions.append(dismiss, merge);
+    card.append(reason, list, actions);
+    section.append(card);
+  }
+  return section;
 }
 
 function renderSuggestions(groups) {
@@ -958,10 +1110,14 @@ function renderBrowse(data) {
   /* A filtered view is a search result, not the whole desk: pending captures
    * and merge prompts would just be noise in it. */
   const quiet = Boolean(q || activeTag);
-  const extras = !quiet && (pendingCache.length || suggestionGroups().length);
+  const extras =
+    !quiet && (pendingCache.length || suggestionGroups().length || categorySuggestions().length);
   if (!quiet && pendingCache.length) el.browseBody.append(renderPending(pendingCache));
   if (!quiet && suggestionGroups().length) {
     el.browseBody.append(renderSuggestions(suggestionGroups()));
+  }
+  if (!quiet && categorySuggestions().length) {
+    el.browseBody.append(renderCategorySuggestions(categorySuggestions()));
   }
 
   if (!matching.length && !extras) {
@@ -994,6 +1150,15 @@ function suggestionGroups() {
   return groups.filter((g) => (g.noteIds || []).length > 1 && g.noteIds.every((id) => alive.has(id)));
 }
 
+function categorySuggestions() {
+  const groups = (suggestionsCache && suggestionsCache.categoryGroups) || [];
+  if (!groups.length || !notesCache) return [];
+  const alive = new Set((notesCache.categories || []).map((c) => c.name));
+  return groups.filter(
+    (g) => (g.categories || []).length > 1 && g.categories.every((c) => alive.has(c))
+  );
+}
+
 function noteText(n) {
   const links = (n.links || []).map((l) => `${l.url} ${l.label}`).join(' ');
   return [n.title, n.summary, n.url, links, (n.tags || []).join(' ')]
@@ -1007,7 +1172,18 @@ function renderCategory(cat) {
   section.className = 'category';
 
   const h3 = document.createElement('h3');
-  h3.textContent = cat.name;
+  h3.className = 'cat-head';
+  const name = document.createElement('span');
+  name.textContent = cat.name;
+
+  const edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'cat-edit';
+  edit.textContent = 'Rename';
+  edit.setAttribute('aria-label', `Rename or merge ${cat.name}`);
+  edit.addEventListener('click', () => openRename(cat.name));
+
+  h3.append(name, edit);
 
   const meta = document.createElement('p');
   meta.className = 'cat-meta';
@@ -1431,6 +1607,69 @@ function emptyState(headline, detail, action = null) {
   return div;
 }
 
+/* ------------------------------------------------- rename a category */
+
+let renaming = null;
+
+function openRename(from) {
+  renaming = from;
+  el.renameTitle.textContent = `Rename "${from}"`;
+  el.renameInput.value = from;
+  el.renameErr.hidden = true;
+
+  /* Offer the other categories, so merging is a choice rather than a trick you
+   * have to know about. */
+  el.renameOptions.replaceChildren();
+  for (const cat of (notesCache && notesCache.categories) || []) {
+    if (cat.name === from) continue;
+    const option = document.createElement('option');
+    option.value = cat.name;
+    el.renameOptions.append(option);
+  }
+
+  el.rename.hidden = false;
+  el.renameInput.focus();
+  el.renameInput.select();
+}
+
+function closeRename() {
+  renaming = null;
+  el.rename.hidden = true;
+  el.renameSave.disabled = false;
+  el.renameSave.textContent = 'Move';
+}
+
+el.renameCancel.addEventListener('click', closeRename);
+el.rename.addEventListener('click', (e) => {
+  if (e.target === el.rename) closeRename();
+});
+
+el.renameSave.addEventListener('click', async () => {
+  const from = renaming;
+  const to = el.renameInput.value.trim();
+  if (!from) return;
+  if (!to) {
+    el.renameErr.textContent = 'Give the category a name.';
+    el.renameErr.hidden = false;
+    return;
+  }
+
+  const merging = ((notesCache && notesCache.categories) || []).some((c) => c.name === to);
+  el.renameSave.disabled = true;
+  el.renameSave.textContent = merging ? 'Merging' : 'Renaming';
+  try {
+    await moveCategory(from, to);
+    closeRename();
+    renderBrowse(notesCache);
+    toast(merging ? `Merged into ${to}` : `Renamed to ${to}`);
+  } catch (err) {
+    el.renameSave.disabled = false;
+    el.renameSave.textContent = 'Move';
+    el.renameErr.textContent = err.message;
+    el.renameErr.hidden = false;
+  }
+});
+
 /* ------------------------------------------------------------------- ui */
 
 let toastTimer;
@@ -1614,6 +1853,7 @@ el.sheet.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!el.confirm.hidden) return closeConfirm();
+  if (!el.rename.hidden) return closeRename();
   if (openRow) return closeOpenRow();
   if (!el.sheet.hidden && connected()) closeSheet();
 });

@@ -139,6 +139,28 @@
   </div>
 </div>
 
+<!-- ── Rename or merge a category ──────────────────────────── -->
+<div class="sheet-backdrop" id="rename" hidden>
+  <div class="sheet sheet-sm" role="dialog" aria-modal="true" aria-labelledby="rename-title">
+    <h2 id="rename-title">Rename category</h2>
+    <p class="muted small">
+      Every note in it moves. Type an existing category name to merge the two
+      together instead.
+    </p>
+
+    <label for="rename-input">Category name</label>
+    <input id="rename-input" list="rename-options" autocapitalize="words" autocorrect="off" spellcheck="false">
+    <datalist id="rename-options"></datalist>
+
+    <p class="err" id="rename-err" hidden></p>
+
+    <div class="sheet-foot">
+      <button type="button" class="ghost" id="rename-cancel">Cancel</button>
+      <button type="button" class="primary" id="rename-save">Move</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Delete confirmation ─────────────────────────────────── -->
 <div class="sheet-backdrop" id="confirm" hidden>
   <div class="sheet sheet-sm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body">

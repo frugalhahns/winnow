@@ -349,6 +349,31 @@ input#search::placeholder { color: var(--ink-faint); }
 
 .category { margin-bottom: 34px; }
 
+.cat-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.cat-edit {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-size: 0.74rem;
+  color: var(--ink-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s, color .15s;
+}
+.cat-head:hover .cat-edit,
+.cat-edit:focus-visible { opacity: 1; }
+.cat-edit:hover { color: var(--ink-dim); }
+/* No hover on touch, so the control has to be permanently visible there. */
+@media (hover: none) {
+  .cat-edit { opacity: 1; }
+}
+
 .category h3 {
   margin: 0 0 4px;
   font-family: var(--font-mark);
