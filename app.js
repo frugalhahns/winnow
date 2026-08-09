@@ -35,6 +35,7 @@ const el = {
   queue: $('#queue'),
   search: $('#search'),
   refresh: $('#refresh-btn'),
+  tagBar: $('#tagbar'),
   selectBtn: $('#select-btn'),
   selectBar: $('#selectbar'),
   selectCount: $('#select-count'),
@@ -78,6 +79,7 @@ let suggestionsCache = null;
  * suggestions come from separate files, and the capture-time prefetch fills
  * notesCache without them. */
 let browseLoaded = false;
+let activeTag = null;
 let selectMode = false;
 const selected = new Set();
 
@@ -406,6 +408,52 @@ async function fetchNotes() {
   return (await fetchNotesFile()).data;
 }
 
+/* --------------------------------------------------- note files */
+
+const filePath = (p) => `/repos/${owner()}/${repo()}/contents/${p.split('/').map(encodeURIComponent).join('/')}`;
+
+/* The index carries no bodies, so the original text is one fetch away in the
+ * markdown. Only paid for when someone actually opens it. */
+async function fetchNoteFile(note) {
+  const res = await gh(filePath(note.path));
+  const body = await res.json();
+  return { raw: fromBase64(body.content), sha: body.sha };
+}
+
+function originalFrom(raw) {
+  const match = raw.match(/^##\s+Original\s*$([\s\S]*)/m);
+  return (match ? match[1] : raw).trim();
+}
+
+/* Mirrors toMarkdown in the sweep's note-files lib. Kept small deliberately:
+ * the two must agree, so neither should get clever. */
+function yamlScalar(value) {
+  const v = String(value ?? '');
+  return /^[\w][\w .,'/@+-]*$/.test(v) && !/: /.test(v) ? v : JSON.stringify(v);
+}
+
+function toMarkdown(note) {
+  const out = [
+    '---',
+    `id: ${yamlScalar(note.id)}`,
+    `title: ${yamlScalar(note.title)}`,
+    `category: ${yamlScalar(note.category)}`,
+    `tags: [${(note.tags || []).map(yamlScalar).join(', ')}]`,
+    `captured: ${yamlScalar(note.captured)}`,
+    `source: ${yamlScalar(note.source || 'unknown')}`,
+    '---',
+    '',
+  ];
+  if (note.summary) out.push(`> ${note.summary}`, '');
+  if ((note.links || []).length) {
+    out.push('## Links', '');
+    for (const l of note.links) out.push(`- [${(l.label || l.url).replace(/[[\]]/g, '')}](${l.url})`);
+    out.push('');
+  }
+  out.push('## Original', '', `${(note.body || '').trim()}`, '');
+  return out.join('\n');
+}
+
 /* --------------------------------------------------------------- merge */
 
 const SUGGESTIONS_PATH = () =>
@@ -474,17 +522,97 @@ function mergeInto(data, ids) {
 }
 
 async function applyMerge(ids) {
-  const { data, sha } = await fetchNotesFile();
-  const next = mergeInto(data, ids);
+  const notes = [];
+  for (const cat of notesCache.categories || []) {
+    for (const n of cat.notes || []) {
+      if (ids.includes(n.id)) notes.push({ ...n, category: cat.name });
+    }
+  }
+  if (notes.length < 2) throw new Error('Those notes are no longer available to merge.');
 
-  await gh(NOTES_PATH(), {
+  notes.sort((a, b) => String(a.captured).localeCompare(String(b.captured)));
+  const primary = notes[0];
+  const others = notes.slice(1);
+
+  /* Bodies live in the markdown, so fetch what we are about to combine. */
+  const files = new Map();
+  for (const n of notes) files.set(n.id, await fetchNoteFile(n));
+
+  const links = [...(primary.links || [])];
+  const known = new Set(links.map((l) => normalizeUrl(l.url)));
+  const tags = new Set(primary.tags || []);
+  let body = originalFrom(files.get(primary.id).raw);
+
+  for (const other of others) {
+    for (const link of other.links || []) {
+      const key = normalizeUrl(link.url);
+      if (key && !known.has(key)) {
+        known.add(key);
+        links.push(link);
+      }
+    }
+    for (const tag of other.tags || []) tags.add(tag);
+
+    const addition = originalFrom(files.get(other.id).raw);
+    if (addition && !body.includes(addition)) {
+      body += `\n\n--- merged from "${other.title}", ${String(other.captured).slice(0, 10)} ---\n\n${addition}`;
+    }
+  }
+
+  const merged = {
+    ...primary,
+    links,
+    tags: [...tags].slice(0, 6),
+    body,
+  };
+
+  /* Write the survivor first: a failure part way through must never leave the
+   * absorbed notes deleted and their content nowhere. */
+  await gh(filePath(primary.path), {
     method: 'PUT',
     body: JSON.stringify({
-      message: `merge: ${ids.length} notes`,
-      content: toBase64(JSON.stringify(next, null, 2) + '\n'),
-      sha,
+      message: `merge: ${ids.length} notes into ${firstLine(primary.title, 40)}`,
+      content: toBase64(toMarkdown(merged)),
+      sha: files.get(primary.id).sha,
     }),
   });
+
+  for (const other of others) {
+    await gh(filePath(other.path), {
+      method: 'DELETE',
+      body: JSON.stringify({
+        message: `merged into ${firstLine(primary.title, 40)}`,
+        sha: files.get(other.id).sha,
+      }),
+    });
+  }
+
+  /* Index is derived; the next sweep rebuilds it regardless. */
+  let next = notesCache;
+  for (const other of others) next = withoutNote(next, other.id);
+  next = {
+    ...next,
+    categories: next.categories.map((cat) => ({
+      ...cat,
+      notes: cat.notes.map((n) =>
+        n.id === primary.id ? { ...n, links, tags: merged.tags } : n
+      ),
+    })),
+  };
+
+  try {
+    const current = await fetchNotesFile();
+    await gh(NOTES_PATH(), {
+      method: 'PUT',
+      body: JSON.stringify({
+        message: `index: merged ${ids.length} notes`,
+        content: toBase64(JSON.stringify(next, null, 2) + '\n'),
+        sha: current.sha,
+      }),
+    });
+  } catch {
+    /* Screen stays right; the sweep will reconcile the file. */
+  }
 
   notesCache = next;
   urlIndex = buildUrlIndex(next);
@@ -770,14 +898,56 @@ async function loadBrowse({ force = false } = {}) {
   }
 }
 
+/* Categories are capped at a dozen on purpose, so tags are how you actually
+ * narrow down. One at a time: stacking them becomes a query builder, which is
+ * not what this is for. */
+function renderTagBar(data) {
+  const counts = new Map();
+  for (const cat of (data && data.categories) || []) {
+    for (const note of cat.notes || []) {
+      for (const tag of note.tags || []) counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+  }
+
+  el.tagBar.replaceChildren();
+  if (counts.size < 2) {
+    el.tagBar.hidden = true;
+    return;
+  }
+
+  const ordered = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 30);
+
+  for (const [tag, count] of ordered) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'tag-chip' + (activeTag === tag ? ' is-on' : '');
+    chip.textContent = `${tag} ${count}`;
+    chip.setAttribute('aria-pressed', String(activeTag === tag));
+    chip.addEventListener('click', () => {
+      activeTag = activeTag === tag ? null : tag;
+      renderBrowse(notesCache);
+    });
+    el.tagBar.append(chip);
+  }
+  el.tagBar.hidden = false;
+}
+
 function renderBrowse(data) {
   const q = el.search.value.trim().toLowerCase();
   const categories = (data && data.categories) || [];
 
+  renderTagBar(data);
+
   const matching = categories
     .map((cat) => ({
       ...cat,
-      notes: (cat.notes || []).filter((n) => !q || noteText(n).includes(q)),
+      notes: (cat.notes || []).filter(
+        (n) =>
+          (!q || noteText(n).includes(q)) &&
+          (!activeTag || (n.tags || []).includes(activeTag))
+      ),
     }))
     .filter((cat) => cat.notes.length);
 
@@ -785,16 +955,24 @@ function renderBrowse(data) {
 
   /* Search filters filed notes only; pending items are transient, and hiding
    * them mid-search would look like they had been lost. */
-  const extras = !q && (pendingCache.length || suggestionGroups().length);
-  if (!q && pendingCache.length) el.browseBody.append(renderPending(pendingCache));
-  if (!q && suggestionGroups().length) {
+  /* A filtered view is a search result, not the whole desk: pending captures
+   * and merge prompts would just be noise in it. */
+  const quiet = Boolean(q || activeTag);
+  const extras = !quiet && (pendingCache.length || suggestionGroups().length);
+  if (!quiet && pendingCache.length) el.browseBody.append(renderPending(pendingCache));
+  if (!quiet && suggestionGroups().length) {
     el.browseBody.append(renderSuggestions(suggestionGroups()));
   }
 
   if (!matching.length && !extras) {
     el.browseBody.append(
-      q
-        ? emptyState('No matches', `Nothing matches "${el.search.value.trim()}".`)
+      quiet
+        ? emptyState(
+            'No matches',
+            q
+              ? `Nothing matches "${el.search.value.trim()}".`
+              : `No notes tagged "${activeTag}".`
+          )
         : emptyState('Nothing winnowed yet', 'Capture some notes and let the daily sweep sort them.')
     );
     return;
@@ -896,18 +1074,29 @@ function renderNote(n) {
     li.append(list);
   }
 
-  /* Rambling notes lose the most to summarizing, so keep the original one tap
-   * away. Skipped when the summary is already the raw text verbatim. */
-  const original = (n.body || '').trim();
-  if (original && original !== (n.summary || '').trim()) {
+  /* Bodies are not in the index any more, so fetch on first open. Rambling
+   * notes lose the most to summarizing, so keep the original one tap away. */
+  if (n.path) {
     const details = document.createElement('details');
     details.className = 'n-original';
     const sum = document.createElement('summary');
     sum.textContent = 'Show original';
     const pre = document.createElement('p');
     pre.className = 'n-original-text';
-    pre.textContent = original;
     details.append(sum, pre);
+
+    let loaded = false;
+    details.addEventListener('toggle', async () => {
+      if (!details.open || loaded) return;
+      loaded = true;
+      pre.textContent = 'Loading...';
+      try {
+        pre.textContent = originalFrom((await fetchNoteFile(n)).raw) || '(empty)';
+      } catch (err) {
+        loaded = false;
+        pre.textContent = `Could not load it: ${err.message}`;
+      }
+    });
     li.append(details);
   }
 
@@ -1129,56 +1318,39 @@ function withoutNote(data, id) {
 }
 
 async function deleteNote(note) {
-  /* Re-read immediately before writing. The daily sweep may have rewritten the
-   * file since this page loaded, and a stale sha would clobber its work. */
-  const { data, sha } = await fetchNotesFile();
-  const next = withoutNote(data, note.id);
-
-  await gh(NOTES_PATH(), {
-    method: 'PUT',
-    body: JSON.stringify({
-      message: `delete: ${firstLine(note.title || note.id, 60)}`,
-      content: toBase64(JSON.stringify(next, null, 2) + '\n'),
-      sha,
-    }),
-  });
-
-  notesCache = next;
-  urlIndex = buildUrlIndex(next);
-  closeOpenRow();
-  renderBrowse(next);
-
-  /* Best effort, and deliberately after the entry is gone: a stubborn archive
-   * file must not block the delete the user actually asked for. */
-  const archived = await deleteArchived(note);
-  if (archived === false) {
-    toast('Note deleted, but its archived copy could not be removed.', true);
-  }
-}
-
-/* Returns true if removed, null if there was nothing there, false on failure. */
-async function deleteArchived(note) {
-  const day = String(note.captured || '').slice(0, 10);
-  const [year, month] = day.split('-');
-  if (!year || !month) return null;
-
-  const path = `archive/${year}/${month}/${note.id}.md`;
-  try {
-    const res = await gh(`/repos/${owner()}/${repo()}/contents/${path}`);
-    const file = await res.json();
-    await gh(`/repos/${owner()}/${repo()}/contents/${path}`, {
+  /* The markdown file is the record, so removing it is the real delete. */
+  if (note.path) {
+    const { sha } = await fetchNoteFile(note);
+    await gh(filePath(note.path), {
       method: 'DELETE',
       body: JSON.stringify({
-        message: `delete archive: ${firstLine(note.title || note.id, 60)}`,
-        sha: file.sha,
+        message: `delete: ${firstLine(note.title || note.id, 60)}`,
+        sha,
       }),
     });
-    return true;
-  } catch (err) {
-    /* Never archived, or already gone. Nothing to report. */
-    if (err.status === 404) return null;
-    return false;
   }
+
+  /* The index is derived, so this is only to keep the screen honest until the
+   * next sweep rebuilds it. A failure here self-heals. */
+  try {
+    const { data, sha } = await fetchNotesFile();
+    const next = withoutNote(data, note.id);
+    await gh(NOTES_PATH(), {
+      method: 'PUT',
+      body: JSON.stringify({
+        message: `index: drop ${firstLine(note.title || note.id, 40)}`,
+        content: toBase64(JSON.stringify(next, null, 2) + '\n'),
+        sha,
+      }),
+    });
+    notesCache = next;
+  } catch {
+    notesCache = withoutNote(notesCache, note.id);
+  }
+
+  urlIndex = buildUrlIndex(notesCache);
+  closeOpenRow();
+  renderBrowse(notesCache);
 }
 
 /* ------------------------------------------------------ duplicate check */
