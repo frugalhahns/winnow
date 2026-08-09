@@ -14,6 +14,8 @@
   --accent-ring: rgb(217 164 65 / .12);
   --on-accent: #1a1408;
   --danger:    #d97757;
+  /* Single knob for the ambient drift. Raise to notice it, 0 to kill it. */
+  --mote-opacity: .16;
   --radius:    14px;
   --pad:       clamp(16px, 4vw, 28px);
   --font-ui:   ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
@@ -35,6 +37,8 @@
     --accent-ring: rgb(180 132 31 / .16);
     --on-accent: #fffdfa;
     --danger:    #b4472a;
+    /* Gold on near-white reads far weaker than on near-black. */
+    --mote-opacity: .26;
   }
 }
 
@@ -339,12 +343,14 @@ input#search::placeholder { color: var(--ink-faint); }
 
 /* Drifting motes. Compositor-only, no JS loop, and gone entirely for anyone
  * who has asked for reduced motion. */
+/* Fixed to the viewport, not the section: anchored to the section it sat
+ * mostly behind the textarea, which is opaque, so almost none of it showed. */
 .motes {
-  position: absolute;
+  position: fixed;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  z-index: 0;
+  z-index: -1;
   opacity: 1;
   transition: opacity 1.2s ease;
 }
@@ -365,9 +371,9 @@ input#search::placeholder { color: var(--ink-faint); }
 }
 @keyframes drift {
   0%   { transform: translate3d(0, 0, 0); opacity: 0; }
-  12%  { opacity: .07; }
-  88%  { opacity: .07; }
-  100% { transform: translate3d(var(--drift, 0), 78vh, 0); opacity: 0; }
+  12%  { opacity: var(--mote-opacity); }
+  88%  { opacity: var(--mote-opacity); }
+  100% { transform: translate3d(var(--drift, 0), 104vh, 0); opacity: 0; }
 }
 
 /* The note falling into the pile on save. */

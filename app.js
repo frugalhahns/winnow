@@ -1825,6 +1825,8 @@ function showView(name) {
   }
   $('#view-capture').classList.toggle('is-active', name === 'capture');
   $('#view-browse').classList.toggle('is-active', name === 'browse');
+  /* Browse is dense with text; drifting motion behind a list is irritating. */
+  el.motes.hidden = name !== 'capture';
   if (name === 'browse') loadBrowse();
 }
 
