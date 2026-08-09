@@ -16,6 +16,7 @@
   --danger:    #d97757;
   /* Single knob for the ambient drift. Raise to notice it, 0 to kill it. */
   --mote-opacity: .16;
+  --mote-color: var(--accent);
   --radius:    14px;
   --pad:       clamp(16px, 4vw, 28px);
   --font-ui:   ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
@@ -38,7 +39,10 @@
     --on-accent: #fffdfa;
     --danger:    #b4472a;
     /* Gold on near-white reads far weaker than on near-black. */
-    --mote-opacity: .26;
+    /* Pale gold on near-white is barely a colour change, so light mode gets a
+     * deeper tone and far more of it to land at the same perceived weight. */
+    --mote-opacity: .42;
+    --mote-color: #9a7526;
   }
 }
 
@@ -355,6 +359,7 @@ input#search::placeholder { color: var(--ink-faint); }
   transition: opacity 1.2s ease;
 }
 .motes.is-still { opacity: 0; }
+.motes.is-quiet { opacity: .45; }
 
 .mote {
   position: absolute;
@@ -362,7 +367,7 @@ input#search::placeholder { color: var(--ink-faint); }
   width: var(--size, 3px);
   height: var(--size, 3px);
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--mote-color);
   opacity: 0;
   will-change: transform, opacity;
   animation-name: drift;

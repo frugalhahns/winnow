@@ -1671,7 +1671,7 @@ function seedMotes() {
     mote.style.animationDuration = `${34 + ((i * 7) % 26)}s`;
     mote.style.animationDelay = `${-(i * 5) % 40}s`;
     mote.style.setProperty('--drift', `${((i % 5) - 2) * 16}px`);
-    mote.style.setProperty('--size', `${2 + (i % 3)}px`);
+    mote.style.setProperty('--size', `${3 + (i % 3)}px`);
     el.motes.append(mote);
   }
 
@@ -1825,8 +1825,9 @@ function showView(name) {
   }
   $('#view-capture').classList.toggle('is-active', name === 'capture');
   $('#view-browse').classList.toggle('is-active', name === 'browse');
-  /* Browse is dense with text; drifting motion behind a list is irritating. */
-  el.motes.hidden = name !== 'capture';
+  /* Browse keeps the drift but dialled down: it is dense with text, and full
+   * strength motion behind a list reads as distraction rather than atmosphere. */
+  el.motes.classList.toggle('is-quiet', name !== 'capture');
   if (name === 'browse') loadBrowse();
 }
 
