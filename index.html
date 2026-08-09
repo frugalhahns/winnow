@@ -33,6 +33,7 @@
 
   <!-- ── Capture ───────────────────────────────────────────── -->
   <section class="view is-active" id="view-capture">
+    <div class="motes" id="motes" aria-hidden="true"></div>
     <form id="capture-form" autocomplete="off">
       <textarea id="note" name="note" rows="8" spellcheck="true"
         placeholder="Drop a thought, a link, a half-formed idea&hellip;"
@@ -55,12 +56,13 @@
       <button class="ghost" id="refresh-btn">Refresh</button>
     </div>
 
-    <div class="tagbar" id="tagbar" hidden></div>
+    <div class="filterbar" id="filterbar" hidden></div>
 
     <div class="selectbar" id="selectbar" hidden>
       <span id="select-count">Pick two or more notes to merge</span>
       <button class="primary" id="merge-btn" disabled>Merge</button>
     </div>
+    <p class="swept" id="swept" hidden></p>
     <div id="browse-body"></div>
   </section>
 

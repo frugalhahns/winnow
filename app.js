@@ -23,6 +23,10 @@ const REFRESH_MARGIN_MS = 120_000;
 /* Each pending item costs one extra request to read, so cap the listing. */
 const PENDING_MAX = 25;
 
+/* Below this you can see everything at once, so a filter control is clutter. */
+const TAG_FILTER_FROM = 20;
+const SEEN_KEY = 'winnow.seen';
+
 const $ = (sel) => document.querySelector(sel);
 
 const el = {
@@ -35,7 +39,9 @@ const el = {
   queue: $('#queue'),
   search: $('#search'),
   refresh: $('#refresh-btn'),
-  tagBar: $('#tagbar'),
+  filterBar: $('#filterbar'),
+  motes: $('#motes'),
+  swept: $('#swept'),
   selectBtn: $('#select-btn'),
   selectBar: $('#selectbar'),
   selectCount: $('#select-count'),
@@ -87,6 +93,7 @@ let suggestionsCache = null;
  * notesCache without them. */
 let browseLoaded = false;
 let activeTag = null;
+let freshIds = new Set();
 let selectMode = false;
 const selected = new Set();
 
@@ -998,6 +1005,8 @@ async function loadBrowse({ force = false } = {}) {
     suggestionsCache = suggestions.data;
     urlIndex = buildUrlIndex(notes);
     browseLoaded = true;
+    freshIds = findFreshlySwept(notes);
+    announceSweep(freshIds.size);
     renderBrowse(notesCache);
   } catch (err) {
     if (err.status === 404) {
@@ -1050,47 +1059,87 @@ async function loadBrowse({ force = false } = {}) {
   }
 }
 
-/* Categories are capped at a dozen on purpose, so tags are how you actually
- * narrow down. One at a time: stacking them becomes a query builder, which is
- * not what this is for. */
-function renderTagBar(data) {
+/* The tags printed on each note are the filter control. A separate wall of
+ * chips above six notes was more chrome than content, and tags grow about four
+ * times faster than notes, so it only got worse. */
+function renderFilterBar(data) {
+  el.filterBar.replaceChildren();
+
+  if (activeTag) {
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'tag-chip is-on';
+    pill.textContent = `${activeTag}  \u00d7`;
+    pill.setAttribute('aria-label', `Clear the ${activeTag} filter`);
+    pill.addEventListener('click', () => {
+      activeTag = null;
+      renderBrowse(notesCache);
+    });
+    el.filterBar.append(pill);
+    el.filterBar.hidden = false;
+    return;
+  }
+
   const counts = new Map();
+  let total = 0;
   for (const cat of (data && data.categories) || []) {
     for (const note of cat.notes || []) {
+      total += 1;
       for (const tag of note.tags || []) counts.set(tag, (counts.get(tag) || 0) + 1);
     }
   }
 
-  el.tagBar.replaceChildren();
-  if (counts.size < 2) {
-    el.tagBar.hidden = true;
+  if (total < TAG_FILTER_FROM || counts.size < 2) {
+    el.filterBar.hidden = true;
     return;
   }
 
-  const ordered = [...counts.entries()]
+  /* Only the tags that group things. The long tail is what search is for. */
+  const top = [...counts.entries()]
+    .filter(([, n]) => n > 1)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 30);
+    .slice(0, 8);
 
-  for (const [tag, count] of ordered) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'tag-chip' + (activeTag === tag ? ' is-on' : '');
-    chip.textContent = `${tag} ${count}`;
-    chip.setAttribute('aria-pressed', String(activeTag === tag));
-    chip.addEventListener('click', () => {
-      activeTag = activeTag === tag ? null : tag;
-      renderBrowse(notesCache);
-    });
-    el.tagBar.append(chip);
+  if (!top.length) {
+    el.filterBar.hidden = true;
+    return;
   }
-  el.tagBar.hidden = false;
+
+  const details = document.createElement('details');
+  details.className = 'filter-tags';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Filter by tag';
+  details.append(summary);
+
+  const row = document.createElement('div');
+  row.className = 'filter-row';
+  for (const [tag, count] of top) {
+    row.append(tagChip(tag, count));
+  }
+  details.append(row);
+  el.filterBar.append(details);
+  el.filterBar.hidden = false;
+}
+
+function tagChip(tag, count) {
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'tag-chip' + (activeTag === tag ? ' is-on' : '');
+  chip.textContent = count ? `${tag} ${count}` : tag;
+  chip.setAttribute('aria-pressed', String(activeTag === tag));
+  chip.addEventListener('click', (e) => {
+    e.stopPropagation();
+    activeTag = activeTag === tag ? null : tag;
+    renderBrowse(notesCache);
+  });
+  return chip;
 }
 
 function renderBrowse(data) {
   const q = el.search.value.trim().toLowerCase();
   const categories = (data && data.categories) || [];
 
-  renderTagBar(data);
+  renderFilterBar(data);
 
   const matching = categories
     .map((cat) => ({
@@ -1205,7 +1254,7 @@ function renderNote(n) {
   row.className = 'note-row';
 
   const li = document.createElement('article');
-  li.className = 'note';
+  li.className = 'note' + (freshIds.has(n.id) ? ' is-fresh' : '');
 
   /* Older notes predate `links` and only carry a single `url`. */
   const links = (Array.isArray(n.links) ? n.links : n.url ? [{ url: n.url, label: n.title }] : [])
@@ -1279,10 +1328,8 @@ function renderNote(n) {
   const foot = document.createElement('div');
   foot.className = 'n-foot';
   for (const t of n.tags || []) {
-    const tag = document.createElement('span');
-    tag.className = 'tag';
-    tag.textContent = t;
-    foot.append(tag);
+    /* Already looks like a chip, so make it behave like one. */
+    foot.append(tagChip(t, null));
   }
   if (n.captured) {
     const when = document.createElement('span');
@@ -1607,6 +1654,93 @@ function emptyState(headline, detail, action = null) {
   return div;
 }
 
+/* ------------------------------------------------------------- motion */
+
+/* Drifting motes, not sparkles: the whole metaphor is grain falling and chaff
+ * drifting. CSS keyframes on transform only, so the compositor handles it and
+ * there is no animation loop to burn battery. */
+function seedMotes() {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  const COUNT = 18;
+  for (let i = 0; i < COUNT; i++) {
+    const mote = document.createElement('span');
+    mote.className = 'mote';
+    /* Staggered durations and delays so the field never looks like a loop. */
+    mote.style.left = `${(i * 97) % 100}%`;
+    mote.style.animationDuration = `${34 + ((i * 7) % 26)}s`;
+    mote.style.animationDelay = `${-(i * 5) % 40}s`;
+    mote.style.setProperty('--drift', `${((i % 5) - 2) * 16}px`);
+    mote.style.setProperty('--size', `${2 + (i % 3)}px`);
+    el.motes.append(mote);
+  }
+
+  /* The room goes still while you write. Fades rather than a hard stop, and it
+   * answers the one real objection to ambient motion in a text field. */
+  el.note.addEventListener('focus', () => el.motes.classList.add('is-still'));
+  el.note.addEventListener('blur', () => el.motes.classList.remove('is-still'));
+}
+
+/* The note visibly falls into the pile. This is the interaction you will do
+ * thousands of times, so it is the one worth making feel like something. */
+function animateCapture(text) {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  const box = el.note.getBoundingClientRect();
+  const ghost = document.createElement('div');
+  ghost.className = 'capture-ghost';
+  ghost.textContent = firstLine(text, 60);
+  ghost.style.left = `${box.left + 18}px`;
+  ghost.style.top = `${box.top + 18}px`;
+  ghost.style.width = `${box.width - 36}px`;
+  document.body.append(ghost);
+  ghost.addEventListener('animationend', () => ghost.remove());
+}
+
+/* --------------------------------------------------- overnight reveal */
+
+/* Something real happens while you sleep and the app used to say nothing about
+ * it. Remember which notes you have already seen, and greet the rest. */
+function loadSeen() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
+function markSeen(ids) {
+  /* Bounded: only the ids currently filed matter, older ones cannot reappear. */
+  localStorage.setItem(SEEN_KEY, JSON.stringify([...ids].slice(-2000)));
+}
+
+function findFreshlySwept(data) {
+  const ids = new Set(
+    (data.categories || []).flatMap((c) => (c.notes || []).map((n) => n.id))
+  );
+  const seen = loadSeen();
+
+  /* First run has nothing to compare against, so nothing is "new". */
+  if (!seen.size) {
+    markSeen(ids);
+    return new Set();
+  }
+
+  const fresh = new Set([...ids].filter((id) => !seen.has(id)));
+  markSeen(ids);
+  return fresh;
+}
+
+function announceSweep(count) {
+  if (!count) {
+    el.swept.hidden = true;
+    return;
+  }
+  el.swept.textContent =
+    count === 1 ? '1 note sorted since you last looked' : `${count} notes sorted since you last looked`;
+  el.swept.hidden = false;
+}
+
 /* ------------------------------------------------- rename a category */
 
 let renaming = null;
@@ -1756,6 +1890,7 @@ el.form.addEventListener('submit', async (e) => {
   }
 
   el.submit.disabled = true;
+  animateCapture(text);
   enqueue(text);
   el.note.value = '';
   updateHint();
@@ -2088,6 +2223,7 @@ async function boot() {
     prefetchNotes();
   }
 
+  seedMotes();
   registerServiceWorker();
 }
 

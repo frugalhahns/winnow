@@ -157,6 +157,9 @@ body {
 
 /* capture */
 
+#view-capture { position: relative; }
+#capture-form, .queue { position: relative; z-index: 1; }
+
 textarea#note {
   width: 100%;
   resize: vertical;
@@ -279,21 +282,29 @@ input#search {
 input#search:focus { border-color: var(--accent-dim); }
 input#search::placeholder { color: var(--ink-faint); }
 
-.tagbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: -8px 0 20px;
+.filterbar { margin: -8px 0 20px; }
+
+.filter-tags summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--ink-faint);
+  list-style: none;
 }
+.filter-tags summary::-webkit-details-marker { display: none; }
+.filter-tags summary::before { content: '+ '; }
+.filter-tags[open] summary::before { content: '- '; }
+.filter-tags summary:hover { color: var(--ink-dim); }
+.filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
 .tag-chip {
   appearance: none;
-  padding: 4px 11px;
+  padding: 3px 10px;
   background: var(--bg-sunken);
   border: 1px solid var(--line-soft);
   border-radius: 999px;
   color: var(--ink-dim);
   font: inherit;
-  font-size: 0.76rem;
+  font-size: 0.75rem;
   cursor: pointer;
   transition: color .15s, border-color .15s, background .15s;
 }
@@ -302,6 +313,84 @@ input#search::placeholder { color: var(--ink-faint); }
   background: var(--accent);
   border-color: var(--accent);
   color: var(--on-accent);
+}
+
+/* The overnight sweep is the one thing that happens without you. Say so. */
+.swept {
+  margin: -8px 0 20px;
+  padding: 9px 15px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line-soft);
+  border-left: 2px solid var(--accent);
+  border-radius: 10px;
+  font-size: 0.83rem;
+  color: var(--ink-dim);
+  animation: rise .3s ease both;
+}
+
+.note.is-fresh {
+  border-left-color: var(--accent);
+  animation: settle 1.6s ease both;
+}
+@keyframes settle {
+  0%   { background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised)); }
+  100% { background: var(--bg-raised); }
+}
+
+/* Drifting motes. Compositor-only, no JS loop, and gone entirely for anyone
+ * who has asked for reduced motion. */
+.motes {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 1;
+  transition: opacity 1.2s ease;
+}
+.motes.is-still { opacity: 0; }
+
+.mote {
+  position: absolute;
+  top: -8px;
+  width: var(--size, 3px);
+  height: var(--size, 3px);
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  will-change: transform, opacity;
+  animation-name: drift;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+@keyframes drift {
+  0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+  12%  { opacity: .07; }
+  88%  { opacity: .07; }
+  100% { transform: translate3d(var(--drift, 0), 78vh, 0); opacity: 0; }
+}
+
+/* The note falling into the pile on save. */
+.capture-ghost {
+  position: fixed;
+  z-index: 70;
+  padding: 10px 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: 10px;
+  font-size: 0.9rem;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  animation: fall .55s cubic-bezier(.4, 0, .7, 1) both;
+}
+@keyframes fall {
+  0%   { transform: translateY(0) scale(1); opacity: .95; }
+  70%  { opacity: .5; }
+  100% { transform: translateY(150px) scale(.82); opacity: 0; }
 }
 
 .selectbar {
